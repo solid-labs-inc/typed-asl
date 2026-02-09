@@ -7,12 +7,13 @@ import {
   SequenceBuilder,
   THROTTLE_RETRY,
 } from './builder.js';
+import { serializeCondition } from './choice.js';
 import {
   getExpression,
   statesFormat,
   statesJsonToString,
 } from './intrinsic.js';
-import { createMapItemProxy, pathOf } from './proxy.js';
+import { createMapItemProxy, createProxy, pathOf } from './proxy.js';
 import type { Proxied, Ref, TypedPayloadMapping } from './types.js';
 
 // ── Test schemas ────────────────────────────────────────────────────
@@ -1829,5 +1830,823 @@ describe('customTask', () => {
 
     const state = result.States['Notify'] as Record<string, unknown>;
     expect(state).not.toHaveProperty('ResultPath');
+  });
+});
+
+// ── fail() ──────────────────────────────────────────────────────────
+
+describe('fail', () => {
+  it('should produce a Fail state with Error and Cause', () => {
+    type Ctx = { bucket: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .fail('validationFailed', {
+        error: 'ValidationError',
+        cause: 'Input is invalid',
+      })
+      .build();
+
+    expect(result.StartAt).toBe('ValidationFailed');
+    const state = result.States['ValidationFailed'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Fail');
+    expect(state['Error']).toBe('ValidationError');
+    expect(state['Cause']).toBe('Input is invalid');
+    expect(state).not.toHaveProperty('Next');
+    expect(state).not.toHaveProperty('End');
+  });
+
+  it('should produce a Fail state as the only state', () => {
+    const result = new SequenceBuilder<Record<string, never>>()
+      .fail('abort', { error: 'Aborted' })
+      .build();
+
+    expect(result.StartAt).toBe('Abort');
+    expect(Object.keys(result.States)).toEqual(['Abort']);
+  });
+
+  it('should support Fail with only Error', () => {
+    const result = new SequenceBuilder<Record<string, never>>()
+      .fail('errorOnly', { error: 'SomeError' })
+      .build();
+
+    const state = result.States['ErrorOnly'] as Record<string, unknown>;
+    expect(state['Error']).toBe('SomeError');
+    expect(state).not.toHaveProperty('Cause');
+  });
+
+  it('should support Fail with only Cause', () => {
+    const result = new SequenceBuilder<Record<string, never>>()
+      .fail('causeOnly', { cause: 'Something went wrong' })
+      .build();
+
+    const state = result.States['CauseOnly'] as Record<string, unknown>;
+    expect(state['Cause']).toBe('Something went wrong');
+    expect(state).not.toHaveProperty('Error');
+  });
+});
+
+// ── choice() ────────────────────────────────────────────────────────
+
+describe('choice', () => {
+  it('should produce a Choice state with a condition and default fall-through', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.task(
+                'processVideo',
+                {
+                  inputSchema: RunMediaInfoInput,
+                  outputSchema: RunMediaInfoOutput,
+                  functionArn: LAMBDA_ARN,
+                },
+                (c) => ({ bucket: c.bucket, key: c.key })
+              ),
+          },
+        ],
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    const choice = result.States['CheckType'] as Record<string, unknown>;
+    expect(choice['Type']).toBe('Choice');
+    expect(choice).not.toHaveProperty('Next');
+    expect(choice).not.toHaveProperty('End');
+
+    const choices = choice['Choices'] as Record<string, unknown>[];
+    expect(choices).toHaveLength(1);
+    expect(choices[0]['Variable']).toBe('$.assetType');
+    expect(choices[0]['StringEquals']).toBe('video');
+    expect(choices[0]['Next']).toBe('ProcessVideo');
+
+    // Default falls through to Finalize
+    expect(choice['Default']).toBe('Finalize');
+
+    // Branch state converges to Finalize
+    const processVideo = result.States['ProcessVideo'] as Record<
+      string,
+      unknown
+    >;
+    expect(processVideo['Next']).toBe('Finalize');
+    expect(processVideo).not.toHaveProperty('End');
+
+    // Finalize is the last state
+    const finalize = result.States['Finalize'] as Record<string, unknown>;
+    expect(finalize['End']).toBe(true);
+  });
+
+  it('should support multiple conditions that all converge', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.pass('videoPath', () => ({ type: 'video' as const })),
+          },
+          {
+            when: { variable: ctx.assetType, stringEquals: 'image' },
+            then: (b) =>
+              b.pass('imagePath', () => ({ type: 'image' as const })),
+          },
+        ],
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    const choice = result.States['CheckType'] as Record<string, unknown>;
+    const choices = choice['Choices'] as Record<string, unknown>[];
+    expect(choices).toHaveLength(2);
+
+    // Both branches converge to Finalize
+    const videoPath = result.States['VideoPath'] as Record<string, unknown>;
+    expect(videoPath['Next']).toBe('Finalize');
+
+    const imagePath = result.States['ImagePath'] as Record<string, unknown>;
+    expect(imagePath['Next']).toBe('Finalize');
+  });
+
+  it('should support an explicit default branch', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.pass('videoPath', () => ({ type: 'video' as const })),
+          },
+        ],
+        default: (b) =>
+          b.pass('defaultPath', () => ({ type: 'other' as const })),
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    const choice = result.States['CheckType'] as Record<string, unknown>;
+    expect(choice['Default']).toBe('DefaultPath');
+
+    // Default branch converges
+    const defaultPath = result.States['DefaultPath'] as Record<string, unknown>;
+    expect(defaultPath['Next']).toBe('Finalize');
+  });
+
+  it('should handle choice as the last state (branches get End: true)', () => {
+    type Ctx = { assetType: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.pass('videoPath', () => ({ type: 'video' as const })),
+          },
+        ],
+        default: (b) =>
+          b.pass('defaultPath', () => ({ type: 'other' as const })),
+      }))
+      .build();
+
+    // Branch states keep End: true when choice is last
+    const videoPath = result.States['VideoPath'] as Record<string, unknown>;
+    expect(videoPath['End']).toBe(true);
+
+    const defaultPath = result.States['DefaultPath'] as Record<string, unknown>;
+    expect(defaultPath['End']).toBe(true);
+  });
+
+  it('should not rewire Fail states inside choice branches', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.pass('videoPath', () => ({ type: 'video' as const })),
+          },
+        ],
+        default: (b) =>
+          b.fail('unknownType', {
+            error: 'UnknownAssetType',
+            cause: 'Not supported',
+          }),
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    // Fail state is NOT rewired — stays terminal
+    const failState = result.States['UnknownType'] as Record<string, unknown>;
+    expect(failState['Type']).toBe('Fail');
+    expect(failState).not.toHaveProperty('Next');
+    expect(failState).not.toHaveProperty('End');
+
+    // Non-fail branch converges
+    const videoPath = result.States['VideoPath'] as Record<string, unknown>;
+    expect(videoPath['Next']).toBe('Finalize');
+  });
+
+  it('should handle empty branch (points directly to convergence)', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.pass('videoPath', () => ({ type: 'video' as const })),
+          },
+          {
+            when: { variable: ctx.assetType, stringEquals: 'image' },
+            // Empty branch — skip straight to next state
+            then: (b) => b,
+          },
+        ],
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    const choice = result.States['CheckType'] as Record<string, unknown>;
+    const choices = choice['Choices'] as Record<string, unknown>[];
+    expect(choices[1]['Next']).toBe('Finalize');
+  });
+
+  it('should support nested choice (choice within a choice branch)', () => {
+    type Ctx = { assetType: string; quality: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.choice('checkQuality', (c) => ({
+                choices: [
+                  {
+                    when: { variable: c.quality, stringEquals: 'hd' },
+                    then: (b2) =>
+                      b2.pass('hdPath', () => ({ quality: 'hd' as const })),
+                  },
+                ],
+                default: (b2) =>
+                  b2.pass('sdPath', () => ({ quality: 'sd' as const })),
+              })),
+          },
+        ],
+        default: (b) => b.pass('otherPath', () => ({ type: 'other' as const })),
+      }))
+      .build();
+
+    // Outer choice exists
+    expect(result.States['CheckType']).toBeDefined();
+    const outerChoice = result.States['CheckType'] as Record<string, unknown>;
+    expect(outerChoice['Type']).toBe('Choice');
+
+    // Inner choice exists
+    expect(result.States['CheckQuality']).toBeDefined();
+    const innerChoice = result.States['CheckQuality'] as Record<
+      string,
+      unknown
+    >;
+    expect(innerChoice['Type']).toBe('Choice');
+
+    // Inner branch states exist
+    expect(result.States['HdPath']).toBeDefined();
+    expect(result.States['SdPath']).toBeDefined();
+    expect(result.States['OtherPath']).toBeDefined();
+  });
+
+  it('should throw on duplicate state names across branches', () => {
+    type Ctx = { flag: boolean };
+
+    expect(() =>
+      new SequenceBuilder<Ctx>()
+        .choice('check', (ctx) => ({
+          choices: [
+            {
+              when: { variable: ctx.flag, booleanEquals: true },
+              then: (b) => b.pass('duplicate', () => ({ a: 1 })),
+            },
+            {
+              when: { variable: ctx.flag, booleanEquals: false },
+              then: (b) => b.pass('duplicate', () => ({ b: 2 })),
+            },
+          ],
+        }))
+        .task(
+          'next',
+          {
+            inputSchema: z.object({
+              step: z.literal('finalize'),
+              bucket: z.string(),
+            }),
+            outputSchema: z.object({ done: z.boolean() }),
+            functionArn: LAMBDA_ARN,
+          },
+          () => ({ bucket: 'x' })
+        )
+        .build()
+    ).toThrow('Duplicate state name "Duplicate"');
+  });
+
+  it('should support compound conditions (and/or/not)', () => {
+    type Ctx = { assetType: string; size: number };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkCompound', (ctx) => ({
+        choices: [
+          {
+            when: {
+              and: [
+                { variable: ctx.assetType, stringEquals: 'video' },
+                { variable: ctx.size, numericGreaterThan: 1000 },
+              ],
+            },
+            then: (b) =>
+              b.pass('largeVideo', () => ({ matched: true as const })),
+          },
+          {
+            when: {
+              or: [
+                { variable: ctx.assetType, stringEquals: 'image' },
+                { variable: ctx.size, numericLessThan: 100 },
+              ],
+            },
+            then: (b) =>
+              b.pass('smallOrImage', () => ({ matched: true as const })),
+          },
+          {
+            when: {
+              not: { variable: ctx.assetType, stringEquals: 'audio' },
+            },
+            then: (b) => b.pass('notAudio', () => ({ matched: true as const })),
+          },
+        ],
+        default: (b) => b.pass('fallback', () => ({ matched: false as const })),
+      }))
+      .build();
+
+    const choice = result.States['CheckCompound'] as Record<string, unknown>;
+    const choices = choice['Choices'] as Record<string, unknown>[];
+
+    // And condition
+    expect(choices[0]).toHaveProperty('And');
+    const andRules = choices[0]['And'] as Record<string, unknown>[];
+    expect(andRules).toHaveLength(2);
+    expect(andRules[0]['Variable']).toBe('$.assetType');
+    expect(andRules[0]['StringEquals']).toBe('video');
+    expect(andRules[1]['Variable']).toBe('$.size');
+    expect(andRules[1]['NumericGreaterThan']).toBe(1000);
+
+    // Or condition
+    expect(choices[1]).toHaveProperty('Or');
+
+    // Not condition
+    expect(choices[2]).toHaveProperty('Not');
+    const notRule = choices[2]['Not'] as Record<string, unknown>;
+    expect(notRule['Variable']).toBe('$.assetType');
+    expect(notRule['StringEquals']).toBe('audio');
+  });
+
+  it('should support isPresent and isNull conditions', () => {
+    type Ctx = { optionalField: string | null; data: unknown };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkPresence', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.optionalField, isPresent: true },
+            then: (b) => b.pass('present', () => ({ found: true as const })),
+          },
+          {
+            when: { variable: ctx.data, isNull: true },
+            then: (b) => b.pass('nullData', () => ({ isNull: true as const })),
+          },
+        ],
+        default: (b) => b.pass('fallback', () => ({ ok: true })),
+      }))
+      .build();
+
+    const choice = result.States['CheckPresence'] as Record<string, unknown>;
+    const choices = choice['Choices'] as Record<string, unknown>[];
+
+    expect(choices[0]['Variable']).toBe('$.optionalField');
+    expect(choices[0]['IsPresent']).toBe(true);
+
+    expect(choices[1]['Variable']).toBe('$.data');
+    expect(choices[1]['IsNull']).toBe(true);
+  });
+
+  it('should support string variable pass-through (raw JSONPath)', () => {
+    type Ctx = { bucket: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkRaw', () => ({
+        choices: [
+          {
+            when: {
+              variable: '$.some.deep.path',
+              stringEquals: 'expected',
+            },
+            then: (b) => b.pass('matched', () => ({ ok: true })),
+          },
+        ],
+        default: (b) => b.pass('fallback', () => ({ ok: false })),
+      }))
+      .build();
+
+    const choice = result.States['CheckRaw'] as Record<string, unknown>;
+    const choices = choice['Choices'] as Record<string, unknown>[];
+    expect(choices[0]['Variable']).toBe('$.some.deep.path');
+  });
+
+  it('should produce correct full JSON snapshot', () => {
+    type Ctx = { assetType: string; bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFile',
+        {
+          inputSchema: LoadFileUploadInput,
+          outputSchema: LoadFileUploadOutput,
+          functionArn: '${load_arn}',
+        },
+        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+      )
+      .choice('checkType', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.assetType, stringEquals: 'video' },
+            then: (b) =>
+              b.task(
+                'processVideo',
+                {
+                  inputSchema: RunMediaInfoInput,
+                  outputSchema: RunMediaInfoOutput,
+                  functionArn: '${mediainfo_arn}',
+                },
+                (c) => ({ bucket: c.bucket, key: c.key })
+              ),
+          },
+        ],
+        default: (b) =>
+          b.fail('unsupportedType', {
+            error: 'UnsupportedType',
+            cause: 'Asset type not supported',
+          }),
+      }))
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: '${finalize_arn}',
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    expect(result).toEqual({
+      StartAt: 'LoadFile',
+      States: {
+        LoadFile: {
+          Type: 'Task',
+          Resource: 'arn:aws:states:::lambda:invoke',
+          ResultPath: '$.loadFile',
+          ResultSelector: { 'fileUpload.$': '$.Payload.fileUpload' },
+          Parameters: {
+            FunctionName: '${load_arn}',
+            Payload: {
+              step: 'load-file-upload',
+              'bucket.$': '$.bucket',
+              'key.$': '$.key',
+            },
+          },
+          Next: 'CheckType',
+        },
+        CheckType: {
+          Type: 'Choice',
+          Choices: [
+            {
+              Variable: '$.assetType',
+              StringEquals: 'video',
+              Next: 'ProcessVideo',
+            },
+          ],
+          Default: 'UnsupportedType',
+        },
+        ProcessVideo: {
+          Type: 'Task',
+          Resource: 'arn:aws:states:::lambda:invoke',
+          ResultPath: '$.processVideo',
+          ResultSelector: {
+            'mediaInfo.$': '$.Payload.mediaInfo',
+            'assetType.$': '$.Payload.assetType',
+          },
+          Parameters: {
+            FunctionName: '${mediainfo_arn}',
+            Payload: {
+              step: 'run-mediainfo',
+              'bucket.$': '$.bucket',
+              'key.$': '$.key',
+            },
+          },
+          Next: 'Finalize',
+        },
+        UnsupportedType: {
+          Type: 'Fail',
+          Error: 'UnsupportedType',
+          Cause: 'Asset type not supported',
+        },
+        Finalize: {
+          Type: 'Task',
+          Resource: 'arn:aws:states:::lambda:invoke',
+          ResultPath: '$.finalize',
+          ResultSelector: { 'done.$': '$.Payload.done' },
+          Parameters: {
+            FunctionName: '${finalize_arn}',
+            Payload: {
+              step: 'finalize',
+              'bucket.$': '$.bucket',
+            },
+          },
+          End: true,
+        },
+      },
+    });
+  });
+});
+
+// ── serializeCondition() ────────────────────────────────────────────
+
+describe('serializeCondition', () => {
+  it('should serialize stringEquals', () => {
+    const result = serializeCondition({
+      variable: '$.type',
+      stringEquals: 'video',
+    });
+    expect(result).toEqual({
+      Variable: '$.type',
+      StringEquals: 'video',
+    });
+  });
+
+  it('should serialize numericEquals', () => {
+    const result = serializeCondition({
+      variable: '$.count',
+      numericEquals: 42,
+    });
+    expect(result).toEqual({
+      Variable: '$.count',
+      NumericEquals: 42,
+    });
+  });
+
+  it('should serialize numericGreaterThan', () => {
+    const result = serializeCondition({
+      variable: '$.size',
+      numericGreaterThan: 1000,
+    });
+    expect(result).toEqual({
+      Variable: '$.size',
+      NumericGreaterThan: 1000,
+    });
+  });
+
+  it('should serialize numericLessThan', () => {
+    const result = serializeCondition({
+      variable: '$.size',
+      numericLessThan: 100,
+    });
+    expect(result).toEqual({
+      Variable: '$.size',
+      NumericLessThan: 100,
+    });
+  });
+
+  it('should serialize booleanEquals', () => {
+    const result = serializeCondition({
+      variable: '$.isReady',
+      booleanEquals: true,
+    });
+    expect(result).toEqual({
+      Variable: '$.isReady',
+      BooleanEquals: true,
+    });
+  });
+
+  it('should serialize isPresent', () => {
+    const result = serializeCondition({
+      variable: '$.optionalField',
+      isPresent: true,
+    });
+    expect(result).toEqual({
+      Variable: '$.optionalField',
+      IsPresent: true,
+    });
+  });
+
+  it('should serialize isNull', () => {
+    const result = serializeCondition({
+      variable: '$.data',
+      isNull: true,
+    });
+    expect(result).toEqual({
+      Variable: '$.data',
+      IsNull: true,
+    });
+  });
+
+  it('should resolve Ref-based variable to JSONPath', () => {
+    const proxy = createProxy<{ assetType: string }>();
+    const result = serializeCondition({
+      variable: proxy.assetType,
+      stringEquals: 'video',
+    });
+    expect(result).toEqual({
+      Variable: '$.assetType',
+      StringEquals: 'video',
+    });
+  });
+
+  it('should pass through string variable as-is', () => {
+    const result = serializeCondition({
+      variable: '$.deep.nested.path',
+      stringEquals: 'value',
+    });
+    expect(result['Variable']).toBe('$.deep.nested.path');
+  });
+
+  it('should serialize nested and conditions', () => {
+    const result = serializeCondition({
+      and: [
+        { variable: '$.type', stringEquals: 'video' },
+        { variable: '$.size', numericGreaterThan: 100 },
+      ],
+    });
+    expect(result).toEqual({
+      And: [
+        { Variable: '$.type', StringEquals: 'video' },
+        { Variable: '$.size', NumericGreaterThan: 100 },
+      ],
+    });
+  });
+
+  it('should serialize nested or conditions', () => {
+    const result = serializeCondition({
+      or: [
+        { variable: '$.type', stringEquals: 'image' },
+        { variable: '$.size', numericLessThan: 50 },
+      ],
+    });
+    expect(result).toEqual({
+      Or: [
+        { Variable: '$.type', StringEquals: 'image' },
+        { Variable: '$.size', NumericLessThan: 50 },
+      ],
+    });
+  });
+
+  it('should serialize not condition', () => {
+    const result = serializeCondition({
+      not: { variable: '$.type', stringEquals: 'audio' },
+    });
+    expect(result).toEqual({
+      Not: { Variable: '$.type', StringEquals: 'audio' },
+    });
+  });
+
+  it('should serialize deeply nested compound conditions', () => {
+    const result = serializeCondition({
+      and: [
+        {
+          or: [
+            { variable: '$.a', stringEquals: 'x' },
+            { variable: '$.b', numericEquals: 1 },
+          ],
+        },
+        { not: { variable: '$.c', booleanEquals: false } },
+      ],
+    });
+    expect(result).toEqual({
+      And: [
+        {
+          Or: [
+            { Variable: '$.a', StringEquals: 'x' },
+            { Variable: '$.b', NumericEquals: 1 },
+          ],
+        },
+        { Not: { Variable: '$.c', BooleanEquals: false } },
+      ],
+    });
+  });
+});
+
+// ── Type-level tests for choice/fail ────────────────────────────────
+
+describe('choice/fail type safety', () => {
+  it('should preserve context type after choice', () => {
+    type Ctx = { assetType: string; bucket: string };
+
+    const builder = new SequenceBuilder<Ctx>().choice('check', (ctx) => ({
+      choices: [
+        {
+          when: { variable: ctx.assetType, stringEquals: 'video' },
+          then: (b) => b.pass('videoPath', () => ({ ok: true })),
+        },
+      ],
+    }));
+
+    expect(builder).toBeDefined();
+
+    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
+      ? C
+      : never;
+
+    expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
+  });
+
+  it('should preserve context type after fail', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const builder = new SequenceBuilder<Ctx>().fail('abort', {
+      error: 'Aborted',
+    });
+
+    expect(builder).toBeDefined();
+
+    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
+      ? C
+      : never;
+
+    expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
   });
 });

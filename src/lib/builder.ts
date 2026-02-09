@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { serializeCondition, type ChoiceCondition } from './choice.js';
 import { getExpression, isIntrinsic } from './intrinsic.js';
 import { createMapItemProxy, createProxy, isRef, pathOf } from './proxy.js';
 import type { MapItemRef } from './proxy.js';
@@ -149,6 +150,42 @@ export interface CustomTaskConfig<Ctx> {
   retry?: RetryConfig[];
 }
 
+// ── Choice types ────────────────────────────────────────────────────
+
+const CHOICE_MARKER: unique symbol = Symbol('choice');
+
+/**
+ * A single branch of a Choice state.
+ *
+ * @typeParam Ctx - The current builder context.
+ */
+export interface ChoiceBranch<Ctx> {
+  when: ChoiceCondition;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  then: (b: SequenceBuilder<Ctx>) => SequenceBuilder<any>;
+}
+
+/**
+ * Configuration for a Choice state.
+ *
+ * @typeParam Ctx - The current builder context.
+ */
+export interface ChoiceConfig<Ctx> {
+  choices: ChoiceBranch<Ctx>[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default?: (b: SequenceBuilder<Ctx>) => SequenceBuilder<any>;
+}
+
+interface ChoiceBlock {
+  branches: {
+    condition: Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    builder: SequenceBuilder<any>;
+  }[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  defaultBuilder?: SequenceBuilder<any>;
+}
+
 // ── SequenceBuilder ─────────────────────────────────────────────────
 
 /**
@@ -187,7 +224,8 @@ export class SequenceBuilder<Ctx> {
   /** @internal Type-level only — does not exist at runtime. */
   declare readonly _ctx: Ctx;
 
-  private _states: [name: string, state: Record<string, unknown>][] = [];
+  /** @internal */
+  _states: [name: string, state: Record<string, unknown>][] = [];
 
   /** Create a new builder. Equivalent to `new SequenceBuilder<T>()` but chainable. */
   static create<T>(): SequenceBuilder<T> {
@@ -488,6 +526,87 @@ export class SequenceBuilder<Ctx> {
   }
 
   /**
+   * Append a Choice state to the sequence.
+   *
+   * A Choice state evaluates conditions and routes execution to the
+   * matching branch. All non-terminal branches automatically converge
+   * to the next state after the choice (implicit convergence).
+   *
+   * @param name - State name for the Choice state.
+   * @param configFn - Callback that receives the typed context proxy and
+   *   returns a `ChoiceConfig` with conditions and branch builders.
+   * @returns The same builder (context type unchanged — can't know which
+   *   branch will execute at runtime).
+   *
+   * @example
+   * ```ts
+   * builder.choice('checkType', ctx => ({
+   *   choices: [
+   *     {
+   *       when: { variable: ctx.assetType, stringEquals: 'video' },
+   *       then: b => b.task('processVideo', videoConfig, c => ({ ... })),
+   *     },
+   *   ],
+   *   default: b => b.fail('unknownType', { error: 'UnknownAssetType' }),
+   * }))
+   * ```
+   */
+  choice(
+    name: string,
+    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>
+  ): SequenceBuilder<Ctx> {
+    const proxy = createProxy<Ctx>();
+    const config = configFn(proxy);
+
+    const branches = config.choices.map((branch) => {
+      const condition = serializeCondition(branch.when);
+      const builder = branch.then(new SequenceBuilder<Ctx>());
+      return { condition, builder };
+    });
+
+    const defaultBuilder = config.default
+      ? config.default(new SequenceBuilder<Ctx>())
+      : undefined;
+
+    const block: ChoiceBlock = { branches, defaultBuilder };
+
+    // Store as a special marker entry
+    const state: Record<string, unknown> = { [CHOICE_MARKER]: block };
+    this._states.push([name, state]);
+
+    return this;
+  }
+
+  /**
+   * Append a Fail state to the sequence.
+   *
+   * A Fail state terminates the execution with an error. It has no
+   * `Next` or `End` field in ASL.
+   *
+   * @param name - State name for the Fail state.
+   * @param config - Error and cause strings.
+   *
+   * @example
+   * ```ts
+   * builder.fail('validationFailed', {
+   *   error: 'ValidationError',
+   *   cause: 'Input file is not a supported format',
+   * })
+   * ```
+   */
+  fail(
+    name: string,
+    config: { error?: string; cause?: string }
+  ): SequenceBuilder<Ctx> {
+    const state: Record<string, unknown> = { Type: 'Fail' };
+    if (config.error !== undefined) state['Error'] = config.error;
+    if (config.cause !== undefined) state['Cause'] = config.cause;
+
+    this._states.push([name, state]);
+    return this;
+  }
+
+  /**
    * Build the final ASL state machine structure.
    *
    * Wires up `Next` pointers between sequential states and sets `End: true`
@@ -506,14 +625,100 @@ export class SequenceBuilder<Ctx> {
 
     for (let i = 0; i < this._states.length; i++) {
       const [name, state] = this._states[i];
-      const copy = { ...state };
+      const nextStateName =
+        i < this._states.length - 1
+          ? capitalize(this._states[i + 1][0])
+          : undefined;
+      const isLast = i === this._states.length - 1;
 
-      if (i === this._states.length - 1) {
-        copy['End'] = true;
-      } else {
-        copy['Next'] = capitalize(this._states[i + 1][0]);
+      // ── Choice block ────────────────────────────────────────────
+      if (CHOICE_MARKER in state) {
+        const block = state[CHOICE_MARKER] as ChoiceBlock;
+        const choices: Record<string, unknown>[] = [];
+
+        for (const { condition, builder } of block.branches) {
+          if (builder._states.length === 0) {
+            // Empty branch → skip directly to convergence
+            if (nextStateName) {
+              choices.push({ ...condition, Next: nextStateName });
+            } else {
+              throw new Error(
+                `Choice branch in "${name}" is empty and there is no next state to converge to`
+              );
+            }
+          } else {
+            const branchMachine = builder.build();
+            // Check for name collisions
+            for (const bName of Object.keys(branchMachine.States)) {
+              if (states[bName]) {
+                throw new Error(
+                  `Duplicate state name "${bName}" in choice "${name}"`
+                );
+              }
+            }
+            if (nextStateName) {
+              rewireTerminals(
+                branchMachine.States as Record<string, Record<string, unknown>>,
+                nextStateName
+              );
+            }
+            Object.assign(states, branchMachine.States);
+            choices.push({ ...condition, Next: branchMachine.StartAt });
+          }
+        }
+
+        const choiceState: Record<string, unknown> = {
+          Type: 'Choice',
+          Choices: choices,
+        };
+
+        if (block.defaultBuilder) {
+          if (block.defaultBuilder._states.length === 0) {
+            if (nextStateName) {
+              choiceState['Default'] = nextStateName;
+            }
+          } else {
+            const defaultMachine = block.defaultBuilder.build();
+            for (const bName of Object.keys(defaultMachine.States)) {
+              if (states[bName]) {
+                throw new Error(
+                  `Duplicate state name "${bName}" in choice "${name}" default branch`
+                );
+              }
+            }
+            if (nextStateName) {
+              rewireTerminals(
+                defaultMachine.States as Record<
+                  string,
+                  Record<string, unknown>
+                >,
+                nextStateName
+              );
+            }
+            Object.assign(states, defaultMachine.States);
+            choiceState['Default'] = defaultMachine.StartAt;
+          }
+        } else if (nextStateName) {
+          choiceState['Default'] = nextStateName;
+        }
+
+        states[capitalize(name)] = choiceState;
+        continue;
       }
 
+      // ── Fail state ──────────────────────────────────────────────
+      if (state['Type'] === 'Fail') {
+        states[capitalize(name)] = { ...state };
+        continue;
+      }
+
+      // ── Normal state ────────────────────────────────────────────
+      const copy = { ...state };
+      if (isLast) {
+        copy['End'] = true;
+      } else {
+        copy['Next'] = nextStateName;
+      }
       states[capitalize(name)] = copy;
     }
 
@@ -526,6 +731,25 @@ export class SequenceBuilder<Ctx> {
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
+
+/**
+ * Rewire terminal states in a flat states map to point to `nextStateName`
+ * instead of ending. Fail states are left untouched (they're always terminal).
+ *
+ * Only touches top-level states — nested Parallel/Map branch states live
+ * inside their container's `Branches`/`ItemProcessor` arrays and are unaffected.
+ */
+function rewireTerminals(
+  states: Record<string, Record<string, unknown>>,
+  nextStateName: string
+): void {
+  for (const state of Object.values(states)) {
+    if (state['End'] === true && state['Type'] !== 'Fail') {
+      delete state['End'];
+      state['Next'] = nextStateName;
+    }
+  }
+}
 
 /**
  * Recursively serialize a parameters object for ASL.
