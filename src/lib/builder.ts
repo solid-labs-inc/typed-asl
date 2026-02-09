@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-import { createProxy, isRef, pathOf } from './proxy.js';
+import { getExpression, isIntrinsic } from './intrinsic.js';
+import { createMapItemProxy, createProxy, isRef, pathOf } from './proxy.js';
+import type { MapItemRef } from './proxy.js';
 import type {
   AnyZodObject,
   Proxied,
@@ -46,6 +48,22 @@ export interface LambdaTaskConfig<
   outputSchema: O;
   functionArn: string;
   retry?: RetryConfig[];
+  /**
+   * Override the auto-generated ResultSelector.
+   *
+   * By default, each output schema key maps to `$.Payload.{key}`.
+   * Use this to rename keys from the Lambda's actual response.
+   *
+   * @example
+   * ```ts
+   * // Lambda returns { outputStorageRef }, but we want { storageRef } in context
+   * resultSelector: {
+   *   'storageRef.$': '$.Payload.outputStorageRef',
+   *   'width.$': '$.Payload.width',
+   * }
+   * ```
+   */
+  resultSelector?: Record<string, string>;
 }
 
 export interface AslStateMachine {
@@ -89,6 +107,48 @@ export type BranchOutputTuple<
     : never;
 };
 
+/**
+ * Configuration for a Map state.
+ *
+ * @typeParam Ctx - The current builder context (data path `$`).
+ * @typeParam ItemType - The type of each element in the iterated array.
+ */
+export interface MapConfig<Ctx, ItemType> {
+  /** JSONPath to the array to iterate (e.g. `'$.scenes'`). */
+  itemsPath: string;
+  /** Max concurrent iterations (default: unlimited). */
+  maxConcurrency?: number;
+  /**
+   * Maps each iteration's context object (`$$`) and the outer state data (`$`)
+   * to the ItemProcessor's initial context.
+   *
+   * `item.value` is `$$.Map.Item.Value`, `item.index` is `$$.Map.Item.Index`.
+   * `ctx` is the outer state data (`$`-rooted proxy).
+   */
+  itemSelector: (
+    item: MapItemRef<ItemType>,
+    ctx: Proxied<Ctx>
+  ) => Record<string, unknown>;
+  /** Pre-built ASL state machine for the ItemProcessor. */
+  processor: AslStateMachine;
+}
+
+/**
+ * Configuration for a custom (non-Lambda) Task state.
+ */
+export interface CustomTaskConfig<Ctx> {
+  /** The task resource ARN (e.g. `'arn:aws:states:::batch:submitJob'`). */
+  resource: string;
+  /**
+   * Callback that builds the ASL Parameters object.
+   * Supports refs and intrinsic functions at any nesting depth.
+   */
+  parameters: (ctx: Proxied<Ctx>) => Record<string, unknown>;
+  /** Where to store the result (e.g. `'$.transcodeJob'`). Omit to replace input. */
+  resultPath?: string;
+  retry?: RetryConfig[];
+}
+
 // ── SequenceBuilder ─────────────────────────────────────────────────
 
 /**
@@ -129,6 +189,42 @@ export class SequenceBuilder<Ctx> {
 
   private _states: [name: string, state: Record<string, unknown>][] = [];
 
+  /** Create a new builder. Equivalent to `new SequenceBuilder<T>()` but chainable. */
+  static create<T>(): SequenceBuilder<T> {
+    return new SequenceBuilder<T>();
+  }
+
+  /**
+   * Apply a transform function to this builder, enabling reusable task
+   * definitions while keeping a flat chain.
+   *
+   * @param fn - A function that appends one or more states to the builder.
+   *   Typically a generic function constrained to require specific upstream
+   *   outputs in the context.
+   * @returns The builder returned by `fn`.
+   *
+   * @example
+   * ```ts
+   * const addCreateAtlas = <Ctx extends { extractFrames: { frameStorageRefs: StorageRef[] } }>(
+   *   b: SequenceBuilder<Ctx>
+   * ) => b.task('createAtlas', createAtlasConfig, ctx => ({
+   *   frameStorageRefs: ctx.extractFrames.frameStorageRefs,
+   *   outputFilename: 'atlas.webp',
+   * }));
+   *
+   * new SequenceBuilder<Input>()
+   *   .task('extractFrames', extractConfig, ctx => ({ ... }))
+   *   .pipe(addCreateAtlas)
+   *   .task('finalize', finalizeConfig, ctx => ({ ... }))
+   *   .build();
+   * ```
+   */
+  pipe<NewCtx>(
+    fn: (builder: SequenceBuilder<Ctx>) => SequenceBuilder<NewCtx>
+  ): SequenceBuilder<NewCtx> {
+    return fn(this);
+  }
+
   /**
    * Append a Lambda Task state to the sequence.
    *
@@ -151,7 +247,8 @@ export class SequenceBuilder<Ctx> {
     const mappedPayload = payloadFn(proxy);
 
     const aslPayload = buildAslPayload(config.inputSchema, mappedPayload);
-    const resultSelector = buildResultSelector(config.outputSchema);
+    const resultSelector =
+      config.resultSelector ?? buildResultSelector(config.outputSchema);
 
     const state: Record<string, unknown> = {
       Type: 'Task',
@@ -227,50 +324,167 @@ export class SequenceBuilder<Ctx> {
    *
    * A Pass state reshapes data without invoking a Lambda. The mapping
    * function defines the output parameters using refs from the current
-   * context or static values. The result is stored at `$.{name}`.
+   * context or static values.
    *
-   * @param name - State name and context key for the pass result.
+   * @param name - State name (and context key when resultPath is not null).
    * @param mappingFn - Callback that maps the current context to the
    *   output parameters. Ref values become JSONPath entries, static
    *   values are kept as-is.
-   * @returns A new builder whose context includes the pass output
-   *   keyed by `name`.
+   * @param options - Optional configuration.
+   * @param options.resultPath - Set to `null` to omit ResultPath entirely
+   *   (output replaces the full state input). Useful for filtering at the
+   *   end of a Map iteration.
+   * @returns A new builder whose context includes the pass output.
    *
    * @example
    * ```ts
+   * // With ResultPath (default): result stored at $.filterOutput
    * builder.pass('filterOutput', ctx => ({
    *   sceneIndex: ctx.scene.id,
    *   videoId: ctx.createVideoAssetForScene.videoId,
    * }))
+   *
+   * // Without ResultPath: output replaces entire input
+   * builder.pass('filterOutput', ctx => ({
+   *   sceneIndex: ctx.scene.id,
+   *   videoId: ctx.createVideoAssetForScene.videoId,
+   * }), { resultPath: null })
    * ```
    */
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
-    mappingFn: (ctx: Proxied<Ctx>) => M
+    mappingFn: (ctx: Proxied<Ctx>) => M,
+    options?: { resultPath?: null }
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<M>>> {
     const proxy = createProxy<Ctx>();
     const mapped = mappingFn(proxy);
 
-    const parameters: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(mapped)) {
-      if (isRef(value)) {
-        parameters[`${key}.$`] = pathOf(value);
-      } else {
-        parameters[key] = value;
-      }
-    }
+    const parameters = serializeParameters(mapped);
 
     const state: Record<string, unknown> = {
       Type: 'Pass',
-      ResultPath: `$.${name}`,
       Parameters: parameters,
     };
+
+    if (options?.resultPath !== null) {
+      state['ResultPath'] = `$.${name}`;
+    }
 
     this._states.push([name, state]);
 
     return this as unknown as SequenceBuilder<
       Ctx & Record<Name, UnwrapRefs<M>>
     >;
+  }
+
+  /**
+   * Append a Map state to the sequence.
+   *
+   * Iterates over an array in the state data, running the ItemProcessor
+   * for each element with configurable concurrency.
+   *
+   * @typeParam Name - State name and context key for the Map result.
+   * @typeParam ItemType - Type of each element in the iterated array.
+   * @typeParam MapOutput - Type of each iteration's output (defaults to `unknown`).
+   *   The Map result is `MapOutput[]`, stored at `$.{name}`.
+   *
+   * @example
+   * ```ts
+   * builder.map<'extractScenes', Scene, SceneResult>('extractScenes', {
+   *   itemsPath: '$.scenes',
+   *   maxConcurrency: 5,
+   *   itemSelector: (item, ctx) => ({
+   *     scene: item.value,
+   *     sceneIndex: item.index,
+   *     inputStorageRef: ctx.previewStorageRef,
+   *   }),
+   *   processor: sceneProcessor.build(),
+   * })
+   * ```
+   */
+  map<Name extends string, ItemType, MapOutput = unknown>(
+    name: Name,
+    config: MapConfig<Ctx, ItemType>
+  ): SequenceBuilder<Ctx & Record<Name, MapOutput[]>> {
+    const outerProxy = createProxy<Ctx>();
+    const itemProxy = createMapItemProxy<ItemType>();
+    const selectorMapping = config.itemSelector(itemProxy, outerProxy);
+    const itemSelector = serializeParameters(selectorMapping);
+
+    const state: Record<string, unknown> = {
+      Type: 'Map',
+      ItemsPath: config.itemsPath,
+      ResultPath: `$.${name}`,
+      ItemSelector: itemSelector,
+      ItemProcessor: {
+        ProcessorConfig: { Mode: 'INLINE' },
+        StartAt: config.processor.StartAt,
+        States: config.processor.States,
+      },
+    };
+
+    if (config.maxConcurrency !== undefined) {
+      state['MaxConcurrency'] = config.maxConcurrency;
+    }
+
+    this._states.push([name, state]);
+
+    return this as unknown as SequenceBuilder<Ctx & Record<Name, MapOutput[]>>;
+  }
+
+  /**
+   * Append a custom (non-Lambda) Task state to the sequence.
+   *
+   * Use this for resources like AWS Batch (`batch:submitJob`), SNS, SQS, etc.
+   * The parameters callback supports refs and intrinsic functions at any
+   * nesting depth.
+   *
+   * @typeParam Name - State name and context key.
+   * @typeParam O - Output type (defaults to `Record<string, unknown>`).
+   *
+   * @example
+   * ```ts
+   * builder.customTask('transcode', {
+   *   resource: 'arn:aws:states:::batch:submitJob',
+   *   parameters: ctx => ({
+   *     JobDefinition: JOB_DEF_ARN,
+   *     JobQueue: JOB_QUEUE_ARN,
+   *     JobName: statesFormat('Transcode-{}', ctx.parentVideoId),
+   *     ContainerOverrides: {
+   *       Environment: [
+   *         { Name: 'DATA', Value: statesJsonToString(ctx.data) },
+   *       ],
+   *     },
+   *   }),
+   *   resultPath: '$.transcodeJob',
+   * })
+   * ```
+   */
+  customTask<Name extends string, O = Record<string, unknown>>(
+    name: Name,
+    config: CustomTaskConfig<Ctx>
+  ): SequenceBuilder<Ctx & Record<Name, O>> {
+    const proxy = createProxy<Ctx>();
+    const rawParams = config.parameters(proxy);
+    const parameters = serializeParameters(rawParams);
+
+    const state: Record<string, unknown> = {
+      Type: 'Task',
+      Resource: config.resource,
+      Parameters: parameters,
+    };
+
+    if (config.resultPath !== undefined) {
+      state['ResultPath'] = config.resultPath;
+    }
+
+    if (config.retry) {
+      state['Retry'] = config.retry;
+    }
+
+    this._states.push([name, state]);
+
+    return this as unknown as SequenceBuilder<Ctx & Record<Name, O>>;
   }
 
   /**
@@ -297,15 +511,15 @@ export class SequenceBuilder<Ctx> {
       if (i === this._states.length - 1) {
         copy['End'] = true;
       } else {
-        copy['Next'] = this._states[i + 1][0];
+        copy['Next'] = capitalize(this._states[i + 1][0]);
       }
 
-      states[name] = copy;
+      states[capitalize(name)] = copy;
     }
 
     return {
       ...(options?.comment ? { Comment: options.comment } : {}),
-      StartAt: this._states[0][0],
+      StartAt: capitalize(this._states[0][0]),
       States: states,
     };
   }
@@ -314,9 +528,56 @@ export class SequenceBuilder<Ctx> {
 // ── Internal helpers ────────────────────────────────────────────────
 
 /**
+ * Recursively serialize a parameters object for ASL.
+ *
+ * - Ref values → `"key.$": "$.path"`
+ * - IntrinsicExpr values → `"key.$": "States.Format(...)"`
+ * - Nested objects → recursed
+ * - Arrays → each element recursed if it's an object
+ * - Primitives → kept as-is
+ */
+export function serializeParameters(
+  obj: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (isRef(value)) {
+      result[`${key}.$`] = pathOf(value);
+    } else if (isIntrinsic(value)) {
+      result[`${key}.$`] = getExpression(value);
+    } else if (Array.isArray(value)) {
+      result[key] = value.map((item) => serializeItem(item));
+    } else if (typeof value === 'object' && value !== null) {
+      result[key] = serializeParameters(value as Record<string, unknown>);
+    } else {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
+function serializeItem(item: unknown): unknown {
+  if (isRef(item)) {
+    return pathOf(item);
+  }
+  if (isIntrinsic(item)) {
+    return getExpression(item);
+  }
+  if (Array.isArray(item)) {
+    return item.map((i) => serializeItem(i));
+  }
+  if (typeof item === 'object' && item !== null) {
+    return serializeParameters(item as Record<string, unknown>);
+  }
+  return item;
+}
+
+/**
  * Build the ASL Payload object from a typed payload mapping.
  *
- * - Extracts the `step` literal from the input schema and adds it
+ * - Extracts the discriminator literal (`step` or `task`) from the input schema
  * - Converts Ref values to `"key.$": "$.path"` JSONPath entries
  * - Keeps static values as `"key": value`
  */
@@ -326,14 +587,16 @@ function buildAslPayload(
 ): Record<string, unknown> {
   const aslPayload: Record<string, unknown> = {};
 
-  const stepValue = extractStepLiteral(inputSchema);
-  if (stepValue !== undefined) {
-    aslPayload['step'] = stepValue;
+  const discriminator = extractDiscriminator(inputSchema);
+  if (discriminator) {
+    aslPayload[discriminator.field] = discriminator.value;
   }
 
   for (const [key, value] of Object.entries(mappedPayload)) {
     if (isRef(value)) {
       aslPayload[`${key}.$`] = pathOf(value);
+    } else if (isIntrinsic(value)) {
+      aslPayload[`${key}.$`] = getExpression(value);
     } else {
       aslPayload[key] = value;
     }
@@ -358,18 +621,35 @@ function buildResultSelector(
 }
 
 /**
- * Extract the string literal value from a schema's `step` field.
+ * Extract the discriminator literal from a schema.
  *
+ * Checks `step` first, then `task`. Returns the field name and value.
  * Supports Zod 4's internal representation (`_zod.def.values` as an array)
  * and Zod 3's `.value` property as a fallback.
  */
-function extractStepLiteral(schema: AnyZodObject): string | undefined {
-  const stepField = schema.shape.step;
-  if (!stepField) return undefined;
+function extractDiscriminator(
+  schema: AnyZodObject
+): { field: string; value: string } | undefined {
+  for (const field of ['step', 'task']) {
+    const schemaField = schema.shape[field];
+    if (!schemaField) continue;
 
+    const value = extractLiteralValue(schemaField);
+    if (value !== undefined) {
+      return { field, value };
+    }
+  }
+  return undefined;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function extractLiteralValue(schemaField: unknown): string | undefined {
   // Zod 4: literal schemas store values in _zod.def.values (array)
   const zod = (
-    stepField as unknown as {
+    schemaField as {
       _zod?: { def?: { type?: string; values?: unknown[] } };
     }
   )?._zod;
@@ -383,10 +663,12 @@ function extractStepLiteral(schema: AnyZodObject): string | undefined {
 
   // Zod 3 fallback: .value property
   if (
-    'value' in stepField &&
-    typeof (stepField as unknown as { value: unknown }).value === 'string'
+    schemaField != null &&
+    typeof schemaField === 'object' &&
+    'value' in schemaField &&
+    typeof (schemaField as { value: unknown }).value === 'string'
   ) {
-    return (stepField as unknown as { value: string }).value;
+    return (schemaField as { value: string }).value;
   }
 
   return undefined;

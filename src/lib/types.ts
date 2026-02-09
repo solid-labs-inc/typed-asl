@@ -75,7 +75,7 @@ export type AnyZodObject = z.ZodObject<any>;
  * ```
  */
 export type TypedPayloadMapping<T extends AnyZodObject> = {
-  [K in Exclude<keyof T['shape'], 'step'>]:
+  [K in Exclude<keyof T['shape'], 'step' | 'task'>]:
     | z.infer<T['shape'][K]>
     | Ref<z.infer<T['shape'][K]>>;
 };

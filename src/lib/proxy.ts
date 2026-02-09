@@ -1,6 +1,38 @@
 import { type Proxied, type Ref, REF_PATH } from './types.js';
 
 /**
+ * Proxy references for a Map state's context object (`$$`).
+ *
+ * - `value` is `$$.Map.Item.Value` — the current iteration element
+ * - `index` is `$$.Map.Item.Index` — the current iteration index
+ */
+export interface MapItemRef<T> {
+  value: Proxied<T>;
+  index: Ref<number>;
+}
+
+/**
+ * Creates typed proxy references for Map state iteration variables.
+ *
+ * Returns proxies rooted at `$$` (the Step Functions context object)
+ * instead of `$` (the state data).
+ *
+ * @example
+ * ```ts
+ * const item = createMapItemProxy<Scene>();
+ * pathOf(item.value);        // "$$.Map.Item.Value"
+ * pathOf(item.value.id);     // "$$.Map.Item.Value.id"
+ * pathOf(item.index);        // "$$.Map.Item.Index"
+ * ```
+ */
+export function createMapItemProxy<T>(): MapItemRef<T> {
+  return {
+    value: createProxy<T>(['$$', 'Map', 'Item', 'Value']),
+    index: createProxy<number>(['$$', 'Map', 'Item', 'Index']),
+  };
+}
+
+/**
  * Creates a typed Proxy that records property access as JSONPath segments.
  *
  * Every property access on the returned proxy returns a new proxy with
@@ -45,8 +77,8 @@ export function pathOf(ref: Ref<unknown>): string {
   const segments = ref[REF_PATH];
   let result = '';
   for (const seg of segments) {
-    if (seg === '$') {
-      result = '$';
+    if (seg === '$' || seg === '$$') {
+      result = seg;
     } else if (seg.startsWith('[')) {
       result += seg;
     } else {

@@ -7,6 +7,12 @@ import {
   SequenceBuilder,
   THROTTLE_RETRY,
 } from './builder.js';
+import {
+  getExpression,
+  statesFormat,
+  statesJsonToString,
+} from './intrinsic.js';
+import { createMapItemProxy, pathOf } from './proxy.js';
 import type { Proxied, Ref, TypedPayloadMapping } from './types.js';
 
 // ── Test schemas ────────────────────────────────────────────────────
@@ -144,10 +150,10 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      expect(result.StartAt).toBe('loadFileUpload');
-      expect(Object.keys(result.States)).toEqual(['loadFileUpload']);
+      expect(result.StartAt).toBe('LoadFileUpload');
+      expect(Object.keys(result.States)).toEqual(['LoadFileUpload']);
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       expect(state['Type']).toBe('Task');
       expect(state['Resource']).toBe('arn:aws:states:::lambda:invoke');
       expect(state['ResultPath']).toBe('$.loadFileUpload');
@@ -185,13 +191,13 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      expect(result.StartAt).toBe('loadFileUpload');
+      expect(result.StartAt).toBe('LoadFileUpload');
 
-      const first = result.States['loadFileUpload'] as Record<string, unknown>;
-      expect(first['Next']).toBe('runMediaInfo');
+      const first = result.States['LoadFileUpload'] as Record<string, unknown>;
+      expect(first['Next']).toBe('RunMediaInfo');
       expect(first).not.toHaveProperty('End');
 
-      const second = result.States['runMediaInfo'] as Record<string, unknown>;
+      const second = result.States['RunMediaInfo'] as Record<string, unknown>;
       expect(second['End']).toBe(true);
       expect(second).not.toHaveProperty('Next');
     });
@@ -238,15 +244,15 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      expect(result.StartAt).toBe('loadFileUpload');
+      expect(result.StartAt).toBe('LoadFileUpload');
 
-      const s1 = result.States['loadFileUpload'] as Record<string, unknown>;
-      expect(s1['Next']).toBe('runMediaInfo');
+      const s1 = result.States['LoadFileUpload'] as Record<string, unknown>;
+      expect(s1['Next']).toBe('RunMediaInfo');
 
-      const s2 = result.States['runMediaInfo'] as Record<string, unknown>;
-      expect(s2['Next']).toBe('createVideo');
+      const s2 = result.States['RunMediaInfo'] as Record<string, unknown>;
+      expect(s2['Next']).toBe('CreateVideo');
 
-      const s3 = result.States['createVideo'] as Record<string, unknown>;
+      const s3 = result.States['CreateVideo'] as Record<string, unknown>;
       expect(s3['End']).toBe(true);
     });
   });
@@ -270,7 +276,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['runMediaInfo'] as Record<string, unknown>;
+      const state = result.States['RunMediaInfo'] as Record<string, unknown>;
       const params = state['Parameters'] as Record<string, unknown>;
       const payload = params['Payload'] as Record<string, unknown>;
 
@@ -295,7 +301,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       const params = state['Parameters'] as Record<string, unknown>;
       const payload = params['Payload'] as Record<string, unknown>;
 
@@ -327,7 +333,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['transcribe'] as Record<string, unknown>;
+      const state = result.States['Transcribe'] as Record<string, unknown>;
       const params = state['Parameters'] as Record<string, unknown>;
       const payload = params['Payload'] as Record<string, unknown>;
 
@@ -378,7 +384,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['createVideo'] as Record<string, unknown>;
+      const state = result.States['CreateVideo'] as Record<string, unknown>;
       const params = state['Parameters'] as Record<string, unknown>;
       const payload = params['Payload'] as Record<string, unknown>;
 
@@ -407,7 +413,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['runMediaInfo'] as Record<string, unknown>;
+      const state = result.States['RunMediaInfo'] as Record<string, unknown>;
       expect(state['ResultSelector']).toEqual({
         'mediaInfo.$': '$.Payload.mediaInfo',
         'assetType.$': '$.Payload.assetType',
@@ -435,7 +441,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       expect(state['Retry']).toEqual(DEFAULT_RETRY);
     });
 
@@ -457,7 +463,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       expect(state).not.toHaveProperty('Retry');
     });
 
@@ -480,7 +486,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       const retry = state['Retry'] as RetryConfig[];
       expect(retry).toHaveLength(2);
       expect(retry[0].ErrorEquals).toContain('ThrottlingException');
@@ -514,9 +520,9 @@ describe('SequenceBuilder', () => {
         ])
         .build();
 
-      expect(result.StartAt).toBe('process');
+      expect(result.StartAt).toBe('Process');
 
-      const state = result.States['process'] as Record<string, unknown>;
+      const state = result.States['Process'] as Record<string, unknown>;
       expect(state['Type']).toBe('Parallel');
       expect(state['ResultPath']).toBe('$.process');
       expect(state['End']).toBe(true);
@@ -527,11 +533,11 @@ describe('SequenceBuilder', () => {
       }[];
       expect(branches).toHaveLength(2);
 
-      expect(branches[0].StartAt).toBe('extractFrames');
-      expect(branches[0].States['extractFrames']).toBeDefined();
+      expect(branches[0].StartAt).toBe('ExtractFrames');
+      expect(branches[0].States['ExtractFrames']).toBeDefined();
 
-      expect(branches[1].StartAt).toBe('transcodePreview');
-      expect(branches[1].States['transcodePreview']).toBeDefined();
+      expect(branches[1].StartAt).toBe('TranscodePreview');
+      expect(branches[1].States['TranscodePreview']).toBeDefined();
     });
 
     it('should wire parallel followed by a task', () => {
@@ -573,11 +579,11 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const parallel = result.States['process'] as Record<string, unknown>;
-      expect(parallel['Next']).toBe('finalize');
+      const parallel = result.States['Process'] as Record<string, unknown>;
+      expect(parallel['Next']).toBe('Finalize');
       expect(parallel).not.toHaveProperty('End');
 
-      const finalize = result.States['finalize'] as Record<string, unknown>;
+      const finalize = result.States['Finalize'] as Record<string, unknown>;
       expect(finalize['End']).toBe(true);
     });
 
@@ -630,7 +636,7 @@ describe('SequenceBuilder', () => {
         ])
         .build();
 
-      const outer = result.States['outer'] as Record<string, unknown>;
+      const outer = result.States['Outer'] as Record<string, unknown>;
       expect(outer['Type']).toBe('Parallel');
 
       const branches = outer['Branches'] as {
@@ -640,14 +646,14 @@ describe('SequenceBuilder', () => {
       expect(branches).toHaveLength(2);
 
       // Branch 0 should have two states: extractFrames → descriptions
-      expect(branches[0].StartAt).toBe('extractFrames');
+      expect(branches[0].StartAt).toBe('ExtractFrames');
       expect(Object.keys(branches[0].States)).toEqual([
-        'extractFrames',
-        'descriptions',
+        'ExtractFrames',
+        'Descriptions',
       ]);
 
       // The nested parallel
-      const nested = branches[0].States['descriptions'] as Record<
+      const nested = branches[0].States['Descriptions'] as Record<
         string,
         unknown
       >;
@@ -659,7 +665,7 @@ describe('SequenceBuilder', () => {
         States: Record<string, unknown>;
       }[];
       expect(nestedBranches).toHaveLength(1);
-      expect(nestedBranches[0].StartAt).toBe('generateEmbedding');
+      expect(nestedBranches[0].StartAt).toBe('GenerateEmbedding');
     });
   });
 
@@ -679,9 +685,9 @@ describe('SequenceBuilder', () => {
         }))
         .build();
 
-      expect(result.StartAt).toBe('filterOutput');
+      expect(result.StartAt).toBe('FilterOutput');
 
-      const state = result.States['filterOutput'] as Record<string, unknown>;
+      const state = result.States['FilterOutput'] as Record<string, unknown>;
       expect(state['Type']).toBe('Pass');
       expect(state['ResultPath']).toBe('$.filterOutput');
       expect(state['End']).toBe(true);
@@ -706,7 +712,7 @@ describe('SequenceBuilder', () => {
         }))
         .build();
 
-      const state = result.States['addDefaults'] as Record<string, unknown>;
+      const state = result.States['AddDefaults'] as Record<string, unknown>;
       expect(state['Parameters']).toEqual({
         'sceneId.$': '$.scene.id',
         isProcessed: true,
@@ -732,10 +738,10 @@ describe('SequenceBuilder', () => {
         }))
         .build();
 
-      const task = result.States['loadFileUpload'] as Record<string, unknown>;
-      expect(task['Next']).toBe('reshape');
+      const task = result.States['LoadFileUpload'] as Record<string, unknown>;
+      expect(task['Next']).toBe('Reshape');
 
-      const pass = result.States['reshape'] as Record<string, unknown>;
+      const pass = result.States['Reshape'] as Record<string, unknown>;
       expect(pass['End']).toBe(true);
     });
   });
@@ -798,7 +804,7 @@ describe('SequenceBuilder', () => {
         )
         .build();
 
-      const state = result.States['loadFileUpload'] as Record<string, unknown>;
+      const state = result.States['LoadFileUpload'] as Record<string, unknown>;
       const params = state['Parameters'] as Record<string, unknown>;
       expect(params['FunctionName']).toBe(arn);
     });
@@ -853,9 +859,9 @@ describe('SequenceBuilder JSON output', () => {
       .build();
 
     expect(result).toEqual({
-      StartAt: 'loadFileUpload',
+      StartAt: 'LoadFileUpload',
       States: {
-        loadFileUpload: {
+        LoadFileUpload: {
           Type: 'Task',
           Resource: 'arn:aws:states:::lambda:invoke',
           ResultPath: '$.loadFileUpload',
@@ -871,9 +877,9 @@ describe('SequenceBuilder JSON output', () => {
             },
           },
           Retry: DEFAULT_RETRY,
-          Next: 'runMediaInfo',
+          Next: 'RunMediaInfo',
         },
-        runMediaInfo: {
+        RunMediaInfo: {
           Type: 'Task',
           Resource: 'arn:aws:states:::lambda:invoke',
           ResultPath: '$.runMediaInfo',
@@ -890,9 +896,9 @@ describe('SequenceBuilder JSON output', () => {
             },
           },
           Retry: THROTTLE_RETRY,
-          Next: 'createVideo',
+          Next: 'CreateVideo',
         },
-        createVideo: {
+        CreateVideo: {
           Type: 'Task',
           Resource: 'arn:aws:states:::lambda:invoke',
           ResultPath: '$.createVideo',
@@ -954,16 +960,16 @@ describe('SequenceBuilder JSON output', () => {
       .build();
 
     expect(result).toEqual({
-      StartAt: 'process',
+      StartAt: 'Process',
       States: {
-        process: {
+        Process: {
           Type: 'Parallel',
           ResultPath: '$.process',
           Branches: [
             {
-              StartAt: 'extractFrames',
+              StartAt: 'ExtractFrames',
               States: {
-                extractFrames: {
+                ExtractFrames: {
                   Type: 'Task',
                   Resource: 'arn:aws:states:::lambda:invoke',
                   ResultPath: '$.extractFrames',
@@ -984,9 +990,9 @@ describe('SequenceBuilder JSON output', () => {
               },
             },
             {
-              StartAt: 'transcodePreview',
+              StartAt: 'TranscodePreview',
               States: {
-                transcodePreview: {
+                TranscodePreview: {
                   Type: 'Task',
                   Resource: 'arn:aws:states:::lambda:invoke',
                   ResultPath: '$.transcodePreview',
@@ -1006,9 +1012,9 @@ describe('SequenceBuilder JSON output', () => {
               },
             },
           ],
-          Next: 'finalize',
+          Next: 'Finalize',
         },
-        finalize: {
+        Finalize: {
           Type: 'Task',
           Resource: 'arn:aws:states:::lambda:invoke',
           ResultPath: '$.finalize',
@@ -1294,5 +1300,534 @@ describe('SequenceBuilder type safety', () => {
     expectTypeOf<
       ResultCtx['filterOutput']['version']
     >().toEqualTypeOf<number>();
+  });
+});
+
+// ── Intrinsic functions ─────────────────────────────────────────────
+
+describe('intrinsic functions', () => {
+  it('should generate States.Format expression', () => {
+    const item = createMapItemProxy<{ id: string }>();
+
+    const expr = statesFormat('scene_{}/frame', item.value.id);
+    expect(getExpression(expr)).toBe(
+      "States.Format('scene_{}/frame', $$.Map.Item.Value.id)"
+    );
+  });
+
+  it('should generate correct path for $$ references', () => {
+    const item = createMapItemProxy<{ id: string; name: string }>();
+    expect(pathOf(item.value)).toBe('$$.Map.Item.Value');
+    expect(pathOf(item.value.id)).toBe('$$.Map.Item.Value.id');
+    expect(pathOf(item.index)).toBe('$$.Map.Item.Index');
+  });
+});
+
+// ── task() discriminator ────────────────────────────────────────────
+
+describe('task discriminator field', () => {
+  const TaskInput = z.object({
+    task: z.literal('extract-frames'),
+    resolution: z.number(),
+    inputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
+  });
+
+  const TaskOutput = z.object({
+    frameStorageRefs: z.array(
+      z.object({ bucket: z.string(), key: z.string() })
+    ),
+    width: z.number(),
+  });
+
+  it('should auto-fill task literal instead of step', () => {
+    type Ctx = {
+      inputStorageRef: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'extractFrames',
+        {
+          inputSchema: TaskInput,
+          outputSchema: TaskOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          resolution: 640,
+          inputStorageRef: ctx.inputStorageRef,
+        })
+      )
+      .build();
+
+    const state = result.States['ExtractFrames'] as Record<string, unknown>;
+    const params = state['Parameters'] as Record<string, unknown>;
+    const payload = params['Payload'] as Record<string, unknown>;
+
+    expect(payload['task']).toBe('extract-frames');
+    expect(payload).not.toHaveProperty('step');
+    expect(payload['resolution']).toBe(640);
+    expect(payload['inputStorageRef.$']).toBe('$.inputStorageRef');
+  });
+});
+
+// ── task() custom resultSelector ────────────────────────────────────
+
+describe('task custom resultSelector', () => {
+  const TranscodeInput = z.object({
+    task: z.literal('transcode-video'),
+    resolution: z.number(),
+    inputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
+  });
+
+  const TranscodeOutput = z.object({
+    storageRef: z.object({ bucket: z.string(), key: z.string() }),
+    width: z.number(),
+    height: z.number(),
+  });
+
+  it('should use custom resultSelector when provided', () => {
+    type Ctx = {
+      inputStorageRef: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'transcode',
+        {
+          inputSchema: TranscodeInput,
+          outputSchema: TranscodeOutput,
+          functionArn: LAMBDA_ARN,
+          resultSelector: {
+            'storageRef.$': '$.Payload.outputStorageRef',
+            'width.$': '$.Payload.width',
+            'height.$': '$.Payload.height',
+          },
+        },
+        (ctx) => ({
+          resolution: 640,
+          inputStorageRef: ctx.inputStorageRef,
+        })
+      )
+      .build();
+
+    const state = result.States['Transcode'] as Record<string, unknown>;
+    expect(state['ResultSelector']).toEqual({
+      'storageRef.$': '$.Payload.outputStorageRef',
+      'width.$': '$.Payload.width',
+      'height.$': '$.Payload.height',
+    });
+  });
+});
+
+// ── pass() with resultPath: null ────────────────────────────────────
+
+describe('pass with resultPath: null', () => {
+  it('should omit ResultPath when resultPath is null', () => {
+    type Ctx = {
+      scene: { id: string; start_seconds: number; end_seconds: number };
+      createVideoAsset: { videoId: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .pass(
+        'filterOutput',
+        (ctx) => ({
+          sceneIndex: ctx.scene.id,
+          start_seconds: ctx.scene.start_seconds,
+          end_seconds: ctx.scene.end_seconds,
+          videoId: ctx.createVideoAsset.videoId,
+        }),
+        { resultPath: null }
+      )
+      .build();
+
+    const state = result.States['FilterOutput'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Pass');
+    expect(state).not.toHaveProperty('ResultPath');
+    expect(state['Parameters']).toEqual({
+      'sceneIndex.$': '$.scene.id',
+      'start_seconds.$': '$.scene.start_seconds',
+      'end_seconds.$': '$.scene.end_seconds',
+      'videoId.$': '$.createVideoAsset.videoId',
+    });
+  });
+
+  it('should include ResultPath when options not provided', () => {
+    type Ctx = { scene: { id: string } };
+
+    const result = new SequenceBuilder<Ctx>()
+      .pass('filterOutput', (ctx) => ({
+        sceneIndex: ctx.scene.id,
+      }))
+      .build();
+
+    const state = result.States['FilterOutput'] as Record<string, unknown>;
+    expect(state['ResultPath']).toBe('$.filterOutput');
+  });
+});
+
+// ── map() ───────────────────────────────────────────────────────────
+
+describe('map', () => {
+  const ProcessInput = z.object({
+    step: z.literal('process-item'),
+    name: z.string(),
+  });
+
+  const ProcessOutput = z.object({
+    result: z.string(),
+  });
+
+  it('should produce a Map state with ItemProcessor', () => {
+    type Ctx = {
+      items: { id: string; name: string }[];
+      bucket: string;
+    };
+
+    const processor = new SequenceBuilder<{
+      name: string;
+      itemIndex: number;
+      bucket: string;
+    }>()
+      .task(
+        'processItem',
+        {
+          inputSchema: ProcessInput,
+          outputSchema: ProcessOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ name: ctx.name })
+      )
+      .build();
+
+    const result = new SequenceBuilder<Ctx>()
+      .map<'processAll', { id: string; name: string }>('processAll', {
+        itemsPath: '$.items',
+        maxConcurrency: 3,
+        itemSelector: (item, ctx) => ({
+          name: item.value.name,
+          itemIndex: item.index,
+          bucket: ctx.bucket,
+        }),
+        processor,
+      })
+      .build();
+
+    expect(result.StartAt).toBe('ProcessAll');
+
+    const state = result.States['ProcessAll'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Map');
+    expect(state['ItemsPath']).toBe('$.items');
+    expect(state['MaxConcurrency']).toBe(3);
+    expect(state['ResultPath']).toBe('$.processAll');
+
+    expect(state['ItemSelector']).toEqual({
+      'name.$': '$$.Map.Item.Value.name',
+      'itemIndex.$': '$$.Map.Item.Index',
+      'bucket.$': '$.bucket',
+    });
+
+    const itemProcessor = state['ItemProcessor'] as Record<string, unknown>;
+    expect(itemProcessor['ProcessorConfig']).toEqual({ Mode: 'INLINE' });
+    expect(itemProcessor['StartAt']).toBe('ProcessItem');
+    expect(itemProcessor['States']).toBeDefined();
+  });
+
+  it('should support intrinsic functions in itemSelector', () => {
+    type Ctx = {
+      items: { id: string }[];
+    };
+
+    const processor = new SequenceBuilder<{ prefix: string }>()
+      .pass('identity', (ctx) => ({ prefix: ctx.prefix }))
+      .build();
+
+    const result = new SequenceBuilder<Ctx>()
+      .map<'processAll', { id: string }>('processAll', {
+        itemsPath: '$.items',
+        itemSelector: (item) => ({
+          prefix: statesFormat('item_{}/output', item.value.id),
+        }),
+        processor,
+      })
+      .build();
+
+    const state = result.States['ProcessAll'] as Record<string, unknown>;
+    const selector = state['ItemSelector'] as Record<string, unknown>;
+    expect(selector['prefix.$']).toBe(
+      "States.Format('item_{}/output', $$.Map.Item.Value.id)"
+    );
+  });
+
+  it('should wire Map followed by another state', () => {
+    type Ctx = {
+      items: { id: string }[];
+      bucket: string;
+      key: string;
+    };
+
+    const processor = new SequenceBuilder<{ bucket: string }>()
+      .pass('identity', (ctx) => ({ bucket: ctx.bucket }))
+      .build();
+
+    const result = new SequenceBuilder<Ctx>()
+      .map<'processAll', { id: string }>('processAll', {
+        itemsPath: '$.items',
+        itemSelector: (_, ctx) => ({
+          bucket: ctx.bucket,
+        }),
+        processor,
+      })
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          bucket: ctx.bucket,
+        })
+      )
+      .build();
+
+    const mapState = result.States['ProcessAll'] as Record<string, unknown>;
+    expect(mapState['Next']).toBe('Finalize');
+    expect(mapState).not.toHaveProperty('End');
+
+    const finalizeState = result.States['Finalize'] as Record<string, unknown>;
+    expect(finalizeState['End']).toBe(true);
+  });
+
+  it('should omit MaxConcurrency when not specified', () => {
+    type Ctx = { items: { id: string }[] };
+
+    const processor = new SequenceBuilder<Record<string, never>>()
+      .pass('noop', () => ({ ok: true }))
+      .build();
+
+    const result = new SequenceBuilder<Ctx>()
+      .map<'processAll', { id: string }>('processAll', {
+        itemsPath: '$.items',
+        itemSelector: () => ({}),
+        processor,
+      })
+      .build();
+
+    const state = result.States['ProcessAll'] as Record<string, unknown>;
+    expect(state).not.toHaveProperty('MaxConcurrency');
+  });
+});
+
+// ── pipe() ──────────────────────────────────────────────────────────
+
+describe('pipe', () => {
+  it('should apply a reusable task function in the chain', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const addRunMediaInfo = <C extends { bucket: string; key: string }>(
+      b: SequenceBuilder<C>
+    ) =>
+      b.task(
+        'runMediaInfo',
+        {
+          inputSchema: RunMediaInfoInput,
+          outputSchema: RunMediaInfoOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
+      );
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFileUpload',
+        {
+          inputSchema: LoadFileUploadInput,
+          outputSchema: LoadFileUploadOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
+      )
+      .pipe(addRunMediaInfo)
+      .build();
+
+    expect(result.StartAt).toBe('LoadFileUpload');
+    expect(Object.keys(result.States)).toEqual([
+      'LoadFileUpload',
+      'RunMediaInfo',
+    ]);
+
+    const first = result.States['LoadFileUpload'] as Record<string, unknown>;
+    expect(first['Next']).toBe('RunMediaInfo');
+
+    const second = result.States['RunMediaInfo'] as Record<string, unknown>;
+    expect(second['End']).toBe(true);
+  });
+
+  it('should preserve context type through pipe for downstream tasks', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const addLoadFileUpload = <C extends { bucket: string; key: string }>(
+      b: SequenceBuilder<C>
+    ) =>
+      b.task(
+        'loadFileUpload',
+        {
+          inputSchema: LoadFileUploadInput,
+          outputSchema: LoadFileUploadOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
+      );
+
+    const builder = new SequenceBuilder<Ctx>().pipe(addLoadFileUpload).task(
+      'createVideo',
+      {
+        inputSchema: CreateVideoInput,
+        outputSchema: CreateVideoOutput,
+        functionArn: LAMBDA_ARN,
+      },
+      (ctx) => ({
+        // This proves the piped task's output is in context
+        fileUpload: ctx.loadFileUpload.fileUpload,
+        mediaInfo: { width: 1920, height: 1080, duration: 60 },
+      })
+    );
+
+    expect(builder).toBeDefined();
+
+    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
+      ? C
+      : never;
+
+    expectTypeOf<ResultCtx>().toHaveProperty('loadFileUpload');
+    expectTypeOf<ResultCtx>().toHaveProperty('createVideo');
+  });
+
+  it('should support chaining multiple pipes', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const addLoad = <C extends { bucket: string; key: string }>(
+      b: SequenceBuilder<C>
+    ) =>
+      b.task(
+        'loadFileUpload',
+        {
+          inputSchema: LoadFileUploadInput,
+          outputSchema: LoadFileUploadOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+      );
+
+    const addMediaInfo = <C extends { bucket: string; key: string }>(
+      b: SequenceBuilder<C>
+    ) =>
+      b.task(
+        'runMediaInfo',
+        {
+          inputSchema: RunMediaInfoInput,
+          outputSchema: RunMediaInfoOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+      );
+
+    const result = new SequenceBuilder<Ctx>()
+      .pipe(addLoad)
+      .pipe(addMediaInfo)
+      .build();
+
+    expect(Object.keys(result.States)).toEqual([
+      'LoadFileUpload',
+      'RunMediaInfo',
+    ]);
+  });
+});
+
+// ── customTask() ────────────────────────────────────────────────────
+
+describe('customTask', () => {
+  it('should produce a Task state with custom resource', () => {
+    type Ctx = {
+      parentVideoId: string;
+      extractScenes: unknown[];
+      parentVideoStorage: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({
+          JobDefinition: '${job_definition_arn}',
+          JobQueue: '${job_queue_arn}',
+          JobName: statesFormat('Transcode-Extraction-{}', ctx.parentVideoId),
+          ContainerOverrides: {
+            Environment: [
+              {
+                Name: 'SCENES',
+                Value: statesJsonToString(ctx.extractScenes),
+              },
+              {
+                Name: 'PARENT_VIDEO_STORAGE',
+                Value: statesJsonToString(ctx.parentVideoStorage),
+              },
+            ],
+          },
+        }),
+        resultPath: '$.transcodeJob',
+      })
+      .build();
+
+    expect(result.StartAt).toBe('Transcode');
+
+    const state = result.States['Transcode'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Task');
+    expect(state['Resource']).toBe('arn:aws:states:::batch:submitJob');
+    expect(state['ResultPath']).toBe('$.transcodeJob');
+    expect(state['End']).toBe(true);
+
+    const params = state['Parameters'] as Record<string, unknown>;
+    expect(params['JobDefinition']).toBe('${job_definition_arn}');
+    expect(params['JobQueue']).toBe('${job_queue_arn}');
+    expect(params['JobName.$']).toBe(
+      "States.Format('Transcode-Extraction-{}', $.parentVideoId)"
+    );
+
+    const overrides = params['ContainerOverrides'] as Record<string, unknown>;
+    const env = overrides['Environment'] as Record<string, unknown>[];
+    expect(env).toHaveLength(2);
+    expect(env[0]['Name']).toBe('SCENES');
+    expect(env[0]['Value.$']).toBe('States.JsonToString($.extractScenes)');
+    expect(env[1]['Name']).toBe('PARENT_VIDEO_STORAGE');
+    expect(env[1]['Value.$']).toBe('States.JsonToString($.parentVideoStorage)');
+  });
+
+  it('should omit ResultPath when not provided', () => {
+    type Ctx = { data: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .customTask('notify', {
+        resource: 'arn:aws:states:::sns:publish',
+        parameters: (ctx) => ({
+          Message: ctx.data,
+        }),
+      })
+      .build();
+
+    const state = result.States['Notify'] as Record<string, unknown>;
+    expect(state).not.toHaveProperty('ResultPath');
   });
 });

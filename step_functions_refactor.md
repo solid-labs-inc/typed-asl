@@ -521,19 +521,20 @@ We chose **Option C** and implemented the core library as the `@stellar/step` pa
 - `Ref<T>` — branded reference carrying phantom type `T` and a path array
 - `Proxied<T>` — recursive mapped type that wraps every property (including tuple indices) as `Ref<PropertyType>`
 - `AnyZodObject` — Zod 4-compatible constraint (`z.ZodObject<any>`)
-- `TypedPayloadMapping<T>` — for each schema field (except `step`), accepts `z.infer<Field> | Ref<z.infer<Field>>`
+- `TypedPayloadMapping<T>` — for each schema field (except `step` and `task`), accepts `z.infer<Field> | Ref<z.infer<Field>>`
 
 #### Proxy runtime ([proxy.ts](packages/step/src/lib/proxy.ts))
 
 - `createProxy<T>()` — JavaScript `Proxy` that records property access as JSONPath segments (handles both named properties and numeric indices)
-- `pathOf(ref)` — converts a `Ref`'s path segments to a JSONPath string (e.g. `$.processScene[0].extractFrames.output`)
+- `pathOf(ref)` — converts a `Ref`'s path segments to a JSONPath string (e.g. `$.processScene[0].extractFrames.output`). Supports both `$` and `$$` roots.
 - `isRef(value)` — type guard checking for `REF_PATH` symbol
+- `createMapItemProxy<T>()` — creates typed proxy refs for Map state iteration variables (`$$.Map.Item.Value` and `$$.Map.Item.Index`)
 
 #### SequenceBuilder ([builder.ts](packages/step/src/lib/builder.ts))
 
 - **`task(name, config, payloadFn)`** — appends a Lambda Task state. Auto-generates:
-  - `Parameters.Payload` with `step` literal extracted from input schema, ref values as `"key.$": "$.path"`, static values as-is
-  - `ResultSelector` mapping every output schema key to `$.Payload.{key}`
+  - `Parameters.Payload` with discriminator literal (`step` or `task`) extracted from input schema, ref values as `"key.$": "$.path"`, static values as-is
+  - `ResultSelector` mapping every output schema key to `$.Payload.{key}` (or custom override via `config.resultSelector`)
   - Optional `Retry` config
   - Returns builder with expanded context: `Ctx & Record<Name, z.infer<O>>`
 
@@ -543,12 +544,33 @@ We chose **Option C** and implemented the core library as the `@stellar/step` pa
   - `[...Branches]` variadic tuple parameter to force tuple inference
   - Returns builder with context: `Ctx & Record<Name, BranchOutputTuple<Ctx, Branches>>`
 
-- **`pass(name, mappingFn)`** — appends a Pass state that reshapes data without invoking a Lambda. Uses:
+- **`pass(name, mappingFn, options?)`** — appends a Pass state that reshapes data without invoking a Lambda. Uses:
   - `UnwrapRefs<M>` — maps `Ref<T>` → `T` for each property in the mapping function's return type
   - Ref values become `"key.$": "$.path"` in `Parameters`, static values kept as-is
+  - `options.resultPath: null` omits `ResultPath` entirely (output replaces full state input)
   - Returns builder with context: `Ctx & Record<Name, UnwrapRefs<M>>`
 
+- **`map(name, config)`** — appends a Map state that iterates over an array. Uses:
+  - `MapConfig<Ctx, ItemType>` — `itemsPath`, `maxConcurrency`, `itemSelector`, `processor`
+  - `itemSelector` callback receives `MapItemRef<T>` (typed `$$.Map.Item.Value`/`Index` proxies) and outer `Proxied<Ctx>`
+  - Supports intrinsic functions (`statesFormat`, `statesJsonToString`) in selector values
+  - `processor` is a pre-built `AslStateMachine` wrapped as an inline `ItemProcessor`
+  - Returns builder with context: `Ctx & Record<Name, MapOutput[]>`
+
+- **`customTask(name, config)`** — appends a non-Lambda Task state (e.g. AWS Batch). Uses:
+  - `CustomTaskConfig<Ctx>` — `resource`, `parameters` callback, optional `resultPath`, `retry`
+  - `parameters` callback supports refs and intrinsic functions at any nesting depth via recursive `serializeParameters()`
+  - Returns builder with context: `Ctx & Record<Name, O>`
+
 - **`build(options?)`** — wires up `Next`/`End` pointers and returns an `AslStateMachine` with optional `Comment`
+
+#### Intrinsic functions ([intrinsic.ts](packages/step/src/lib/intrinsic.ts))
+
+- `INTRINSIC_EXPR` symbol — runtime marker for intrinsic expression objects
+- `IntrinsicExpr<T>` — branded type carrying a Step Functions intrinsic expression string and phantom result type
+- `statesFormat(template, ...args)` — `States.Format(...)` intrinsic function. Arguments can be `Ref` or `IntrinsicExpr`
+- `statesJsonToString(ref)` — `States.JsonToString(...)` intrinsic function
+- `isIntrinsic(value)` / `getExpression(expr)` — type guard and expression extractor
 
 #### Retry presets
 
@@ -557,30 +579,41 @@ We chose **Option C** and implemented the core library as the `@stellar/step` pa
 
 #### Exports ([index.ts](packages/step/src/index.ts))
 
-All types and runtime values are re-exported from the barrel: `REF_PATH`, `Ref`, `Proxied`, `TypedPayloadMapping`, `createProxy`, `pathOf`, `isRef`, `SequenceBuilder`, `DEFAULT_RETRY`, `THROTTLE_RETRY`, `RetryConfig`, `LambdaTaskConfig`, `AslStateMachine`, `BranchOutputTuple`, `UnwrapRefs`.
+All types and runtime values are re-exported from the barrel: `REF_PATH`, `Ref`, `Proxied`, `TypedPayloadMapping`, `createProxy`, `pathOf`, `isRef`, `createMapItemProxy`, `MapItemRef`, `INTRINSIC_EXPR`, `IntrinsicExpr`, `isIntrinsic`, `getExpression`, `statesFormat`, `statesJsonToString`, `SequenceBuilder`, `DEFAULT_RETRY`, `THROTTLE_RETRY`, `serializeParameters`, `RetryConfig`, `LambdaTaskConfig`, `AslStateMachine`, `BranchOutputTuple`, `UnwrapRefs`, `MapConfig`, `CustomTaskConfig`.
 
-#### Test coverage (62 tests, all passing)
+#### Test coverage (75 tests, all passing)
 
 - **proxy.test.ts** (25 tests) — path recording, numeric indices, `isRef`, `pathOf`
 - **types.test.ts** (7 tests) — `TypedPayloadMapping` accepts correct types, rejects wrong types
-- **builder.test.ts** (30 tests):
+- **builder.test.ts** (43 tests):
   - Runtime: state generation, payload mapping, result selector, retry config, parallel branches, pass reshaping, comment field, function ARN wiring
   - Full JSON output: three-state sequential chain, parallel + downstream task
   - Type-level (`expectTypeOf`): context accumulation, upstream ref types, parallel tuple indexing, pass output unwrapping
+  - Intrinsic functions: `statesFormat` expression, `$$` path generation
+  - `task` discriminator: auto-fills `task` literal instead of `step`
+  - Custom resultSelector: overrides auto-generated mapping
+  - Pass with `resultPath: null`: omits `ResultPath` from output
+  - Map state: `ItemProcessor`, `ItemSelector` with `$$` refs and intrinsic functions, `MaxConcurrency`
+  - Custom task: Batch `submitJob` with nested intrinsic functions
+  - **Full extraction step function**: complete expression of `extraction_step_function_definition.json.tftpl` with Map → Parallel → nested Parallel → Pass → Batch
 
-### What's still missing
+### What was previously missing (now implemented)
 
-To fully generate the extraction step function (`extraction_step_function_definition.json.tftpl`), the following features are needed:
+All four gaps have been filled:
 
-1. **Map state** — The extraction step function uses a `Map` state (`ExtractScenes`) that iterates over `$.scenes` with `ItemsPath`, `ItemSelector`, `MaxConcurrency`, and an `ItemProcessor` containing a nested state machine. This is the largest remaining piece.
+1. **Map state** — `map(name, config)` method with `ItemsPath`, `ItemSelector`, `MaxConcurrency`, and inline `ItemProcessor`. ✅
+2. **Non-Lambda Task resources** — `customTask(name, config)` method with configurable `resource`, nested `parameters` callback, and optional `resultPath`. Used for AWS Batch `submitJob`. ✅
+3. **Intrinsic functions** — `statesFormat()` and `statesJsonToString()` produce `IntrinsicExpr` values that serialize to `"key.$": "States.Format(...)"` entries. Recursive `serializeParameters()` handles intrinsics at any nesting depth. ✅
+4. **Context object references (`$$`)** — `createMapItemProxy<T>()` creates `$$`-rooted proxies for `$$.Map.Item.Value` and `$$.Map.Item.Index`. `pathOf()` updated to handle `$$` as a root segment. ✅
 
-2. **Non-Lambda Task resources** — The `Transcode` state uses `arn:aws:states:::batch:submitJob` (AWS Batch) instead of `arn:aws:states:::lambda:invoke`. The current `task()` method hardcodes the Lambda invoke resource and result selector pattern. Options:
-   - Add a `batchTask()` method for Batch-specific states
-   - Or generalize `task()` to accept a configurable `Resource` and custom `Parameters`/`ResultSelector`
+**Additional changes:**
+- `task()` now auto-detects `task` discriminator in addition to `step` (needed for Python-based lambdas like `extract-frames` and `transcode-video`)
+- `task()` supports optional `resultSelector` override for renaming fields (e.g. `outputStorageRef` → `storageRef`)
+- `pass()` supports `{ resultPath: null }` option to omit `ResultPath` (output replaces entire input)
+- `TypedPayloadMapping` excludes both `step` and `task` from required fields
 
-3. **Intrinsic functions** — Several states use Step Functions intrinsic functions:
-   - `States.Format(...)` — string interpolation (e.g. `States.Format('scene_{}/frame', $$.Map.Item.Value.id)`)
-   - `States.JsonToString(...)` — JSON serialization
-   - These appear in `ItemSelector` and `ContainerOverrides` parameters
+### What's still needed for production use
 
-4. **Context object references (`$$`)** — The Map state's `ItemSelector` references `$$.Map.Item.Value` and `$$.Map.Item.Index`, which are Step Functions context object paths (not data path `$`). The proxy system currently only supports `$`-rooted paths.
+1. **CI target** — Add an nx target (`nx generate-step-functions asset-ingestion-step`) that runs the builder and writes generated JSON to `terraform/.../generated/`
+2. **Terraform migration** — Replace `templatefile()` references in `main.tf` with the generated JSON
+3. **Express `ingestion_step_function_definition.json.tftpl`** — the other step function in this directory
