@@ -150,6 +150,29 @@ export interface CustomTaskConfig<Ctx> {
   retry?: RetryConfig[];
 }
 
+// ── Catch types ─────────────────────────────────────────────────────
+
+const CATCH_HANDLERS: unique symbol = Symbol('catchHandlers');
+
+/**
+ * Configuration for a Catch block on a Parallel or Task state.
+ *
+ * @typeParam Ctx - The current builder context.
+ */
+export interface CatchConfig<Ctx> {
+  errorEquals: string[];
+  resultPath?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (b: SequenceBuilder<Ctx>) => SequenceBuilder<any>;
+}
+
+interface CatchEntry {
+  errorEquals: string[];
+  resultPath?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  builder: SequenceBuilder<any>;
+}
+
 // ── Choice types ────────────────────────────────────────────────────
 
 const CHOICE_MARKER: unique symbol = Symbol('choice');
@@ -340,7 +363,8 @@ export class SequenceBuilder<Ctx> {
     Branches extends readonly SequenceBuilder<any>[]
   >(
     name: Name,
-    branches: [...Branches]
+    branches: [...Branches],
+    options?: { catch?: CatchConfig<Ctx>[] }
   ): SequenceBuilder<Ctx & Record<Name, BranchOutputTuple<Ctx, Branches>>> {
     const aslBranches = branches.map((b) => b.build());
 
@@ -350,6 +374,16 @@ export class SequenceBuilder<Ctx> {
       Branches: aslBranches,
     };
 
+    if (options?.catch) {
+      const catchEntries: CatchEntry[] = options.catch.map((c) => ({
+        errorEquals: c.errorEquals,
+        resultPath: c.resultPath,
+        builder: c.handler(new SequenceBuilder<Ctx>()),
+      }));
+      (state as Record<string | symbol, unknown>)[CATCH_HANDLERS] =
+        catchEntries;
+    }
+
     this._states.push([name, state]);
 
     return this as unknown as SequenceBuilder<
@@ -358,11 +392,7 @@ export class SequenceBuilder<Ctx> {
   }
 
   /**
-   * Append a Pass state to the sequence.
-   *
-   * A Pass state reshapes data without invoking a Lambda. The mapping
-   * function defines the output parameters using refs from the current
-   * context or static values.
+   * Append a Pass state that reshapes data using a mapping function.
    *
    * @param name - State name (and context key when resultPath is not null).
    * @param mappingFn - Callback that maps the current context to the
@@ -370,32 +400,64 @@ export class SequenceBuilder<Ctx> {
    *   values are kept as-is.
    * @param options - Optional configuration.
    * @param options.resultPath - Set to `null` to omit ResultPath entirely
-   *   (output replaces the full state input). Useful for filtering at the
-   *   end of a Map iteration.
-   * @returns A new builder whose context includes the pass output.
+   *   (output replaces the full state input).
    *
    * @example
    * ```ts
-   * // With ResultPath (default): result stored at $.filterOutput
    * builder.pass('filterOutput', ctx => ({
    *   sceneIndex: ctx.scene.id,
    *   videoId: ctx.createVideoAssetForScene.videoId,
    * }))
-   *
-   * // Without ResultPath: output replaces entire input
-   * builder.pass('filterOutput', ctx => ({
-   *   sceneIndex: ctx.scene.id,
-   *   videoId: ctx.createVideoAssetForScene.videoId,
-   * }), { resultPath: null })
    * ```
    */
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
     options?: { resultPath?: null }
-  ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<M>>> {
+  ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<M>>>;
+
+  /**
+   * Append a Pass state that injects a literal value at a given path.
+   *
+   * The `resultPath` must be a `$.{key}` string. The context is expanded
+   * with `Record<key, R>` so the value is available downstream.
+   *
+   * @param name - State name.
+   * @param config - The literal `result` value and `resultPath` to store it.
+   *
+   * @example
+   * ```ts
+   * builder.pass('setFlag', { result: true, resultPath: '$.isWholeVideo' })
+   * // ctx.isWholeVideo is now boolean
+   * ```
+   */
+  pass<R, Key extends string>(
+    name: string,
+    config: { result: R; resultPath: `$.${Key}` }
+  ): SequenceBuilder<Ctx & Record<Key, R>>;
+
+  pass(
+    name: string,
+    mappingFnOrConfig:
+      | ((ctx: Proxied<Ctx>) => Record<string, unknown>)
+      | { result: unknown; resultPath: string },
+    options?: { resultPath?: null }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): SequenceBuilder<any> {
+    // Overload 2: literal Result
+    if (typeof mappingFnOrConfig !== 'function') {
+      const state: Record<string, unknown> = {
+        Type: 'Pass',
+        Result: mappingFnOrConfig.result,
+        ResultPath: mappingFnOrConfig.resultPath,
+      };
+      this._states.push([name, state]);
+      return this;
+    }
+
+    // Overload 1: mapping function
     const proxy = createProxy<Ctx>();
-    const mapped = mappingFn(proxy);
+    const mapped = mappingFnOrConfig(proxy);
 
     const parameters = serializeParameters(mapped);
 
@@ -409,10 +471,7 @@ export class SequenceBuilder<Ctx> {
     }
 
     this._states.push([name, state]);
-
-    return this as unknown as SequenceBuilder<
-      Ctx & Record<Name, UnwrapRefs<M>>
-    >;
+    return this;
   }
 
   /**
@@ -714,11 +773,41 @@ export class SequenceBuilder<Ctx> {
 
       // ── Normal state ────────────────────────────────────────────
       const copy = { ...state };
+      delete (copy as Record<string | symbol, unknown>)[CATCH_HANDLERS];
+
       if (isLast) {
         copy['End'] = true;
       } else {
         copy['Next'] = nextStateName;
       }
+
+      // Handle Catch handlers (Parallel, Task states)
+      if (CATCH_HANDLERS in state) {
+        const handlers = (state as Record<string | symbol, unknown>)[
+          CATCH_HANDLERS
+        ] as CatchEntry[];
+        const aslCatch: Record<string, unknown>[] = [];
+
+        for (const handler of handlers) {
+          const handlerMachine = handler.builder.build();
+          for (const bName of Object.keys(handlerMachine.States)) {
+            if (states[bName]) {
+              throw new Error(
+                `Duplicate state name "${bName}" in catch handler for "${name}"`
+              );
+            }
+          }
+          Object.assign(states, handlerMachine.States);
+          aslCatch.push({
+            ErrorEquals: handler.errorEquals,
+            ...(handler.resultPath ? { ResultPath: handler.resultPath } : {}),
+            Next: handlerMachine.StartAt,
+          });
+        }
+
+        copy['Catch'] = aslCatch;
+      }
+
       states[capitalize(name)] = copy;
     }
 

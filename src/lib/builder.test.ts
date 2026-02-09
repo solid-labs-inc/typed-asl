@@ -12,6 +12,7 @@ import {
   getExpression,
   statesFormat,
   statesJsonToString,
+  statesMathAdd,
 } from './intrinsic.js';
 import { createMapItemProxy, createProxy, pathOf } from './proxy.js';
 import type { Proxied, Ref, TypedPayloadMapping } from './types.js';
@@ -2648,5 +2649,358 @@ describe('choice/fail type safety', () => {
       : never;
 
     expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
+  });
+});
+
+// ── statesMathAdd() ─────────────────────────────────────────────────
+
+describe('statesMathAdd', () => {
+  it('should generate States.MathAdd expression', () => {
+    const proxy = createProxy<{ scene: { start_frame: number } }>();
+    const expr = statesMathAdd(proxy.scene.start_frame, 1);
+    expect(getExpression(expr)).toBe('States.MathAdd($.scene.start_frame, 1)');
+  });
+
+  it('should support negative operands', () => {
+    const proxy = createProxy<{ scene: { end_frame: number } }>();
+    const expr = statesMathAdd(proxy.scene.end_frame, -1);
+    expect(getExpression(expr)).toBe('States.MathAdd($.scene.end_frame, -1)');
+  });
+
+  it('should serialize in pass Parameters', () => {
+    type Ctx = { scene: { start_frame: number; end_frame: number } };
+
+    const result = new SequenceBuilder<Ctx>()
+      .pass('adjusted', (ctx) => ({
+        start: statesMathAdd(ctx.scene.start_frame, 1),
+        end: statesMathAdd(ctx.scene.end_frame, -1),
+      }))
+      .build();
+
+    const state = result.States['Adjusted'] as Record<string, unknown>;
+    const params = state['Parameters'] as Record<string, unknown>;
+    expect(params['start.$']).toBe('States.MathAdd($.scene.start_frame, 1)');
+    expect(params['end.$']).toBe('States.MathAdd($.scene.end_frame, -1)');
+  });
+});
+
+// ── pass() with Result literal ──────────────────────────────────────
+
+describe('pass with Result literal', () => {
+  it('should produce a Pass state with Result and ResultPath', () => {
+    type Ctx = { bucket: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .pass('setFlag', { result: true, resultPath: '$.isWholeVideo' })
+      .build();
+
+    expect(result.StartAt).toBe('SetFlag');
+    const state = result.States['SetFlag'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Pass');
+    expect(state['Result']).toBe(true);
+    expect(state['ResultPath']).toBe('$.isWholeVideo');
+    expect(state).not.toHaveProperty('Parameters');
+  });
+
+  it('should support false as a Result value', () => {
+    const result = new SequenceBuilder<Record<string, never>>()
+      .pass('setFlag', { result: false, resultPath: '$.isWholeVideo' })
+      .build();
+
+    const state = result.States['SetFlag'] as Record<string, unknown>;
+    expect(state['Result']).toBe(false);
+  });
+
+  it('should wire Result pass between other states', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFile',
+        {
+          inputSchema: LoadFileUploadInput,
+          outputSchema: LoadFileUploadOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+      )
+      .pass('setFlag', { result: true, resultPath: '$.ready' })
+      .task(
+        'runMediaInfo',
+        {
+          inputSchema: RunMediaInfoInput,
+          outputSchema: RunMediaInfoOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+      )
+      .build();
+
+    const loadFile = result.States['LoadFile'] as Record<string, unknown>;
+    expect(loadFile['Next']).toBe('SetFlag');
+
+    const setFlag = result.States['SetFlag'] as Record<string, unknown>;
+    expect(setFlag['Next']).toBe('RunMediaInfo');
+    expect(setFlag).not.toHaveProperty('End');
+
+    const runMediaInfo = result.States['RunMediaInfo'] as Record<
+      string,
+      unknown
+    >;
+    expect(runMediaInfo['End']).toBe(true);
+  });
+
+  it('should expand context with the resultPath key and result type', () => {
+    type Ctx = { bucket: string };
+
+    const builder = new SequenceBuilder<Ctx>().pass('setFlag', {
+      result: true,
+      resultPath: '$.isWholeVideo',
+    });
+
+    expect(builder).toBeDefined();
+
+    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
+      ? C
+      : never;
+
+    // Original context preserved
+    expectTypeOf<ResultCtx>().toHaveProperty('bucket');
+    // Result key extracted from resultPath and added to context
+    expectTypeOf<ResultCtx>().toHaveProperty('isWholeVideo');
+    expectTypeOf<ResultCtx['isWholeVideo']>().toEqualTypeOf<boolean>();
+  });
+});
+
+// ── parallel() with catch ───────────────────────────────────────────
+
+describe('parallel with catch', () => {
+  it('should produce a Catch block on the Parallel state', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .parallel(
+        'main',
+        [
+          new SequenceBuilder<Ctx>().task(
+            'extractFrames',
+            {
+              inputSchema: ExtractFramesInput,
+              outputSchema: ExtractFramesOutput,
+              functionArn: LAMBDA_ARN,
+            },
+            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          ),
+        ],
+        {
+          catch: [
+            {
+              errorEquals: ['States.ALL'],
+              resultPath: '$.error',
+              handler: (b) =>
+                b.fail('handleError', {
+                  error: 'ProcessingFailed',
+                  cause: 'Something went wrong',
+                }),
+            },
+          ],
+        }
+      )
+      .build();
+
+    const parallel = result.States['Main'] as Record<string, unknown>;
+    expect(parallel['Type']).toBe('Parallel');
+
+    const catchBlock = parallel['Catch'] as Record<string, unknown>[];
+    expect(catchBlock).toHaveLength(1);
+    expect(catchBlock[0]['ErrorEquals']).toEqual(['States.ALL']);
+    expect(catchBlock[0]['ResultPath']).toBe('$.error');
+    expect(catchBlock[0]['Next']).toBe('HandleError');
+
+    // Catch handler states are merged into the outer state map
+    const failState = result.States['HandleError'] as Record<string, unknown>;
+    expect(failState['Type']).toBe('Fail');
+    expect(failState['Error']).toBe('ProcessingFailed');
+  });
+
+  it('should support multi-state catch handler', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .parallel(
+        'main',
+        [
+          new SequenceBuilder<Ctx>().task(
+            'extractFrames',
+            {
+              inputSchema: ExtractFramesInput,
+              outputSchema: ExtractFramesOutput,
+              functionArn: LAMBDA_ARN,
+            },
+            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          ),
+        ],
+        {
+          catch: [
+            {
+              errorEquals: ['States.ALL'],
+              resultPath: '$.error',
+              handler: (b) =>
+                b
+                  .task(
+                    'markFailed',
+                    {
+                      inputSchema: LoadFileUploadInput,
+                      outputSchema: LoadFileUploadOutput,
+                      functionArn: LAMBDA_ARN,
+                    },
+                    (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+                  )
+                  .fail('failExecution', { cause: 'Processing failed' }),
+            },
+          ],
+        }
+      )
+      .build();
+
+    const parallel = result.States['Main'] as Record<string, unknown>;
+    const catchBlock = parallel['Catch'] as Record<string, unknown>[];
+    expect(catchBlock[0]['Next']).toBe('MarkFailed');
+
+    // markFailed → failExecution wiring
+    const markFailed = result.States['MarkFailed'] as Record<string, unknown>;
+    expect(markFailed['Next']).toBe('FailExecution');
+
+    const failExecution = result.States['FailExecution'] as Record<
+      string,
+      unknown
+    >;
+    expect(failExecution['Type']).toBe('Fail');
+  });
+
+  it('should omit ResultPath from Catch when not provided', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .parallel(
+        'main',
+        [
+          new SequenceBuilder<Ctx>().task(
+            'extractFrames',
+            {
+              inputSchema: ExtractFramesInput,
+              outputSchema: ExtractFramesOutput,
+              functionArn: LAMBDA_ARN,
+            },
+            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          ),
+        ],
+        {
+          catch: [
+            {
+              errorEquals: ['States.ALL'],
+              handler: (b) => b.fail('handleError', { error: 'Failed' }),
+            },
+          ],
+        }
+      )
+      .build();
+
+    const parallel = result.States['Main'] as Record<string, unknown>;
+    const catchBlock = parallel['Catch'] as Record<string, unknown>[];
+    expect(catchBlock[0]).not.toHaveProperty('ResultPath');
+  });
+
+  it('should throw on duplicate state name in catch handler', () => {
+    type Ctx = { bucket: string; key: string };
+
+    expect(() =>
+      new SequenceBuilder<Ctx>()
+        .task(
+          'handleError',
+          {
+            inputSchema: LoadFileUploadInput,
+            outputSchema: LoadFileUploadOutput,
+            functionArn: LAMBDA_ARN,
+          },
+          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        )
+        .parallel(
+          'main',
+          [
+            new SequenceBuilder<Ctx>().task(
+              'extractFrames',
+              {
+                inputSchema: ExtractFramesInput,
+                outputSchema: ExtractFramesOutput,
+                functionArn: LAMBDA_ARN,
+              },
+              (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            ),
+          ],
+          {
+            catch: [
+              {
+                errorEquals: ['States.ALL'],
+                handler: (b) => b.fail('handleError', { error: 'Failed' }),
+              },
+            ],
+          }
+        )
+        .build()
+    ).toThrow('Duplicate state name "HandleError"');
+  });
+
+  it('should wire parallel with catch followed by next state', () => {
+    type Ctx = { bucket: string; key: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .parallel(
+        'main',
+        [
+          new SequenceBuilder<Ctx>().task(
+            'extractFrames',
+            {
+              inputSchema: ExtractFramesInput,
+              outputSchema: ExtractFramesOutput,
+              functionArn: LAMBDA_ARN,
+            },
+            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          ),
+        ],
+        {
+          catch: [
+            {
+              errorEquals: ['States.ALL'],
+              resultPath: '$.error',
+              handler: (b) => b.fail('handleError', { error: 'Failed' }),
+            },
+          ],
+        }
+      )
+      .task(
+        'finalize',
+        {
+          inputSchema: z.object({
+            step: z.literal('finalize'),
+            bucket: z.string(),
+          }),
+          outputSchema: z.object({ done: z.boolean() }),
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({ bucket: ctx.bucket })
+      )
+      .build();
+
+    // Parallel has Next to finalize (normal flow)
+    const parallel = result.States['Main'] as Record<string, unknown>;
+    expect(parallel['Next']).toBe('Finalize');
+
+    // Catch handler exists as sibling state
+    expect(result.States['HandleError']).toBeDefined();
+
+    // Finalize is last
+    const finalize = result.States['Finalize'] as Record<string, unknown>;
+    expect(finalize['End']).toBe(true);
   });
 });

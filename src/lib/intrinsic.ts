@@ -28,7 +28,8 @@ export function isIntrinsic(value: unknown): value is IntrinsicExpr {
 /**
  * Extract the expression string from an IntrinsicExpr.
  */
-export function getExpression(expr: IntrinsicExpr): string {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getExpression(expr: IntrinsicExpr<any>): string {
   return expr[INTRINSIC_EXPR];
 }
 
@@ -92,4 +93,24 @@ export function statesFormat(
  */
 export function statesJsonToString(ref: Ref<unknown>): IntrinsicExpr<string> {
   return createIntrinsic<string>(`States.JsonToString(${argToString(ref)})`);
+}
+
+/**
+ * Step Functions `States.MathAdd()` intrinsic function.
+ *
+ * Adds an integer operand to a numeric value referenced by a JSONPath.
+ *
+ * @example
+ * ```ts
+ * statesMathAdd(ctx.scene.start_frame, 1)
+ * // → "States.MathAdd($.scene.start_frame, 1)"
+ * ```
+ */
+export function statesMathAdd(
+  ref: Ref<unknown>,
+  operand: number
+): IntrinsicExpr<number> {
+  return createIntrinsic<number>(
+    `States.MathAdd(${argToString(ref)}, ${operand})`
+  );
 }

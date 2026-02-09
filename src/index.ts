@@ -8,6 +8,7 @@ export {
   getExpression,
   statesFormat,
   statesJsonToString,
+  statesMathAdd,
 } from './lib/intrinsic.js';
 export type { IntrinsicExpr } from './lib/intrinsic.js';
 export {
@@ -26,6 +27,7 @@ export type {
   CustomTaskConfig,
   ChoiceBranch,
   ChoiceConfig,
+  CatchConfig,
 } from './lib/builder.js';
 export { serializeCondition } from './lib/choice.js';
 export type { ChoiceCondition } from './lib/choice.js';
