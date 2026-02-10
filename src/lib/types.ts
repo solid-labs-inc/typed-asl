@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { IntrinsicExpr } from './intrinsic.js';
 
 /**
  * Symbol used as a key to store the JSONPath segments on a Ref proxy.
@@ -48,11 +49,10 @@ export type AnyZodObject = z.ZodObject<any>;
 /**
  * Type-safe payload mapping for a Lambda Task state.
  *
- * Given a Zod input schema, produces an object type where:
- *   - The `step` field is excluded (auto-filled from the schema's z.literal)
- *   - Every other field requires either:
- *     - A static value matching the schema's inferred type, OR
- *     - A `Ref<T>` where T matches (i.e. a proxy reference from `createProxy`)
+ * Given a Zod input schema, produces an object type where every field
+ * requires either:
+ *   - A static value matching the schema's inferred type, OR
+ *   - A `Ref<T>` where T matches (i.e. a proxy reference from `createProxy`)
  *
  * This ensures at compile time that:
  *   - No required fields are missing
@@ -69,13 +69,15 @@ export type AnyZodObject = z.ZodObject<any>;
  *
  * // TypedPayloadMapping<typeof schema> =
  * // {
+ * //   step: 'create-atlas';
  * //   frameStorageRefs: StorageRef[] | Ref<StorageRef[]>;
  * //   outputFilename: string | Ref<string>;
  * // }
  * ```
  */
 export type TypedPayloadMapping<T extends AnyZodObject> = {
-  [K in Exclude<keyof T['shape'], 'step' | 'task'>]:
+  [K in keyof T['shape']]:
     | z.infer<T['shape'][K]>
-    | Ref<z.infer<T['shape'][K]>>;
+    | Ref<z.infer<T['shape'][K]>>
+    | IntrinsicExpr<z.infer<T['shape'][K]>>;
 };

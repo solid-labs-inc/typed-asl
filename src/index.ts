@@ -21,6 +21,7 @@ export type {
   RetryConfig,
   LambdaTaskConfig,
   AslStateMachine,
+  InferContext,
   BranchOutputTuple,
   UnwrapRefs,
   MapConfig,

@@ -28,13 +28,11 @@ const ComplexSchema = z.object({
 // ── TypedPayloadMapping ─────────────────────────────────────────────
 
 describe('TypedPayloadMapping', () => {
-  it('should exclude the step field', () => {
+  it('should include all fields from the schema', () => {
     type Mapping = TypedPayloadMapping<typeof SimpleSchema>;
 
-    // 'step' should NOT be a key
-    expectTypeOf<Mapping>().not.toHaveProperty('step');
-
-    // 'name' and 'count' should be keys
+    // All fields including 'step' should be keys
+    expectTypeOf<Mapping>().toHaveProperty('step');
     expectTypeOf<Mapping>().toHaveProperty('name');
     expectTypeOf<Mapping>().toHaveProperty('count');
   });

@@ -3,9 +3,9 @@ import { z } from 'zod';
 
 import {
   DEFAULT_RETRY,
-  type RetryConfig,
   SequenceBuilder,
   THROTTLE_RETRY,
+  type RetryConfig,
 } from './builder.js';
 import { serializeCondition } from './choice.js';
 import {
@@ -14,7 +14,12 @@ import {
   statesJsonToString,
   statesMathAdd,
 } from './intrinsic.js';
-import { createMapItemProxy, createProxy, pathOf } from './proxy.js';
+import {
+  createMapItemProxy,
+  createProxy,
+  pathOf,
+  type MapItemRef,
+} from './proxy.js';
 import type { Proxied, Ref, TypedPayloadMapping } from './types.js';
 
 // ── Test schemas ────────────────────────────────────────────────────
@@ -146,6 +151,7 @@ describe('SequenceBuilder', () => {
             retry: DEFAULT_RETRY,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -175,6 +181,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -187,6 +194,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -216,6 +224,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -228,6 +237,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -240,6 +250,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'create-video-for-file' as const,
             fileUpload: ctx.loadFileUpload.fileUpload,
             mediaInfo: ctx.runMediaInfo.mediaInfo,
           })
@@ -260,7 +271,7 @@ describe('SequenceBuilder', () => {
   });
 
   describe('payload generation', () => {
-    it('should auto-fill step literal from the input schema', () => {
+    it('should include step literal from the payload callback', () => {
       type Ctx = { bucket: string; key: string };
 
       const result = new SequenceBuilder<Ctx>()
@@ -272,6 +283,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -297,6 +309,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -329,6 +342,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'transcribe-video' as const,
             videoId: ctx.videoId,
             audioStorageRef: null,
           })
@@ -356,6 +370,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -368,6 +383,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -380,6 +396,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'create-video-for-file' as const,
             fileUpload: ctx.loadFileUpload.fileUpload,
             mediaInfo: ctx.runMediaInfo.mediaInfo,
           })
@@ -409,6 +426,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -437,6 +455,7 @@ describe('SequenceBuilder', () => {
             retry: DEFAULT_RETRY,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -459,6 +478,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -482,6 +502,7 @@ describe('SequenceBuilder', () => {
             retry: THROTTLE_RETRY,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -508,7 +529,11 @@ describe('SequenceBuilder', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
           new SequenceBuilder<Ctx>().task(
             'transcodePreview',
@@ -517,7 +542,11 @@ describe('SequenceBuilder', () => {
               outputSchema: TranscodePreviewOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'transcode-preview' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ])
         .build();
@@ -554,7 +583,11 @@ describe('SequenceBuilder', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
           new SequenceBuilder<Ctx>().task(
             'transcodePreview',
@@ -563,7 +596,11 @@ describe('SequenceBuilder', () => {
               outputSchema: TranscodePreviewOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'transcode-preview' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ])
         .task(
@@ -574,6 +611,7 @@ describe('SequenceBuilder', () => {
             functionArn: LAMBDA_ARN,
           },
           (ctx) => ({
+            step: 'finalize' as const,
             width: ctx.process[0].extractFrames.width,
             previewStorageRef:
               ctx.process[1].transcodePreview.previewStorageRef,
@@ -603,7 +641,11 @@ describe('SequenceBuilder', () => {
                 outputSchema: ExtractFramesOutput,
                 functionArn: LAMBDA_ARN,
               },
-              (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+              (ctx) => ({
+                step: 'extract-frames' as const,
+                bucket: ctx.bucket,
+                key: ctx.key,
+              })
             )
             .parallel('descriptions', [
               new SequenceBuilder<
@@ -621,6 +663,7 @@ describe('SequenceBuilder', () => {
                   functionArn: LAMBDA_ARN,
                 },
                 (ctx) => ({
+                  step: 'generate-embedding' as const,
                   frameStorageRefs: ctx.extractFrames.frameStorageRefs,
                 })
               ),
@@ -633,7 +676,11 @@ describe('SequenceBuilder', () => {
               outputSchema: TranscodePreviewOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'transcode-preview' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ])
         .build();
@@ -733,7 +780,11 @@ describe('SequenceBuilder', () => {
             outputSchema: LoadFileUploadOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'load-file-upload' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         )
         .pass('reshape', (ctx) => ({
           fileId: ctx.loadFileUpload.fileUpload.id,
@@ -760,7 +811,11 @@ describe('SequenceBuilder', () => {
             outputSchema: LoadFileUploadOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'load-file-upload' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         )
         .build({ comment: 'Asset Extraction' });
 
@@ -778,7 +833,11 @@ describe('SequenceBuilder', () => {
             outputSchema: LoadFileUploadOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'load-file-upload' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         )
         .build();
 
@@ -800,6 +859,7 @@ describe('SequenceBuilder', () => {
             functionArn: arn,
           },
           (ctx) => ({
+            step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
           })
@@ -829,6 +889,7 @@ describe('SequenceBuilder JSON output', () => {
           retry: DEFAULT_RETRY,
         },
         (ctx) => ({
+          step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -842,6 +903,7 @@ describe('SequenceBuilder JSON output', () => {
           retry: THROTTLE_RETRY,
         },
         (ctx) => ({
+          step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -854,6 +916,7 @@ describe('SequenceBuilder JSON output', () => {
           functionArn: '${create_video_arn}',
         },
         (ctx) => ({
+          step: 'create-video-for-file' as const,
           fileUpload: ctx.loadFileUpload.fileUpload,
           mediaInfo: ctx.runMediaInfo.mediaInfo,
         })
@@ -873,7 +936,7 @@ describe('SequenceBuilder JSON output', () => {
           Parameters: {
             FunctionName: '${load_file_upload_arn}',
             Payload: {
-              step: 'load-file-upload',
+              step: 'load-file-upload' as const,
               'bucket.$': '$.bucket',
               'key.$': '$.key',
             },
@@ -892,7 +955,7 @@ describe('SequenceBuilder JSON output', () => {
           Parameters: {
             FunctionName: '${run_mediainfo_arn}',
             Payload: {
-              step: 'run-mediainfo',
+              step: 'run-mediainfo' as const,
               'bucket.$': '$.bucket',
               'key.$': '$.key',
             },
@@ -912,7 +975,7 @@ describe('SequenceBuilder JSON output', () => {
           Parameters: {
             FunctionName: '${create_video_arn}',
             Payload: {
-              step: 'create-video-for-file',
+              step: 'create-video-for-file' as const,
               'fileUpload.$': '$.loadFileUpload.fileUpload',
               'mediaInfo.$': '$.runMediaInfo.mediaInfo',
             },
@@ -935,7 +998,11 @@ describe('SequenceBuilder JSON output', () => {
             outputSchema: ExtractFramesOutput,
             functionArn: '${extract_arn}',
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         ),
         new SequenceBuilder<Ctx>().task(
           'transcodePreview',
@@ -944,7 +1011,11 @@ describe('SequenceBuilder JSON output', () => {
             outputSchema: TranscodePreviewOutput,
             functionArn: '${transcode_arn}',
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         ),
       ])
       .task(
@@ -955,6 +1026,7 @@ describe('SequenceBuilder JSON output', () => {
           functionArn: '${finalize_arn}',
         },
         (ctx) => ({
+          step: 'finalize' as const,
           width: ctx.process[0].extractFrames.width,
           previewStorageRef: ctx.process[1].transcodePreview.previewStorageRef,
         })
@@ -1026,7 +1098,7 @@ describe('SequenceBuilder JSON output', () => {
           Parameters: {
             FunctionName: '${finalize_arn}',
             Payload: {
-              step: 'finalize',
+              step: 'finalize' as const,
               'width.$': '$.process[0].extractFrames.width',
               'previewStorageRef.$':
                 '$.process[1].transcodePreview.previewStorageRef',
@@ -1054,6 +1126,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1066,6 +1139,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1107,6 +1181,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1119,6 +1194,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1131,9 +1207,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
-          // These refs are type-checked:
-          // ctx.loadFileUpload.fileUpload is Ref<{id, organizationId, filename}>
-          // ctx.runMediaInfo.mediaInfo is Ref<{width, height, duration}>
+          step: 'create-video-for-file' as const,
           fileUpload: ctx.loadFileUpload.fileUpload,
           mediaInfo: ctx.runMediaInfo.mediaInfo,
         })
@@ -1192,7 +1266,11 @@ describe('SequenceBuilder type safety', () => {
           outputSchema: ExtractFramesOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'extract-frames' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       ),
       new SequenceBuilder<Ctx>().task(
         'transcodePreview',
@@ -1201,7 +1279,11 @@ describe('SequenceBuilder type safety', () => {
           outputSchema: TranscodePreviewOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'transcode-preview' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       ),
     ]);
 
@@ -1244,7 +1326,11 @@ describe('SequenceBuilder type safety', () => {
             outputSchema: ExtractFramesOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         ),
         new SequenceBuilder<Ctx>().task(
           'transcodePreview',
@@ -1253,7 +1339,11 @@ describe('SequenceBuilder type safety', () => {
             outputSchema: TranscodePreviewOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         ),
       ])
       .task(
@@ -1264,6 +1354,7 @@ describe('SequenceBuilder type safety', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'finalize' as const,
           width: ctx.process[0].extractFrames.width,
           previewStorageRef: ctx.process[1].transcodePreview.previewStorageRef,
         })
@@ -1341,7 +1432,7 @@ describe('task discriminator field', () => {
     width: z.number(),
   });
 
-  it('should auto-fill task literal instead of step', () => {
+  it('should include task literal from the payload callback', () => {
     type Ctx = {
       inputStorageRef: { bucket: string; key: string };
     };
@@ -1355,6 +1446,7 @@ describe('task discriminator field', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          task: 'extract-frames' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
         })
@@ -1381,8 +1473,9 @@ describe('task custom resultSelector', () => {
     inputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
   });
 
+  // outputSchema describes the actual Lambda response
   const TranscodeOutput = z.object({
-    storageRef: z.object({ bucket: z.string(), key: z.string() }),
+    outputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
     width: z.number(),
     height: z.number(),
   });
@@ -1399,13 +1492,14 @@ describe('task custom resultSelector', () => {
           inputSchema: TranscodeInput,
           outputSchema: TranscodeOutput,
           functionArn: LAMBDA_ARN,
-          resultSelector: {
-            'storageRef.$': '$.Payload.outputStorageRef',
-            'width.$': '$.Payload.width',
-            'height.$': '$.Payload.height',
-          },
+          resultSelector: (output) => ({
+            storageRef: output.outputStorageRef,
+            width: output.width,
+            height: output.height,
+          }),
         },
         (ctx) => ({
+          task: 'transcode-video' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
         })
@@ -1486,32 +1580,28 @@ describe('map', () => {
       bucket: string;
     };
 
-    const processor = new SequenceBuilder<{
-      name: string;
-      itemIndex: number;
-      bucket: string;
-    }>()
-      .task(
-        'processItem',
-        {
-          inputSchema: ProcessInput,
-          outputSchema: ProcessOutput,
-          functionArn: LAMBDA_ARN,
-        },
-        (ctx) => ({ name: ctx.name })
-      )
-      .build();
-
     const result = new SequenceBuilder<Ctx>()
-      .map<'processAll', { id: string; name: string }>('processAll', {
+      .map('processAll', {
         itemsPath: '$.items',
         maxConcurrency: 3,
-        itemSelector: (item, ctx) => ({
+        itemSelector: (
+          item: MapItemRef<{ id: string; name: string }>,
+          ctx
+        ) => ({
           name: item.value.name,
           itemIndex: item.index,
           bucket: ctx.bucket,
         }),
-        processor,
+        processor: (b) =>
+          b.task(
+            'processItem',
+            {
+              inputSchema: ProcessInput,
+              outputSchema: ProcessOutput,
+              functionArn: LAMBDA_ARN,
+            },
+            (ctx) => ({ step: 'process-item' as const, name: ctx.name })
+          ),
       })
       .build();
 
@@ -1540,17 +1630,13 @@ describe('map', () => {
       items: { id: string }[];
     };
 
-    const processor = new SequenceBuilder<{ prefix: string }>()
-      .pass('identity', (ctx) => ({ prefix: ctx.prefix }))
-      .build();
-
     const result = new SequenceBuilder<Ctx>()
-      .map<'processAll', { id: string }>('processAll', {
+      .map('processAll', {
         itemsPath: '$.items',
-        itemSelector: (item) => ({
+        itemSelector: (item: MapItemRef<{ id: string }>) => ({
           prefix: statesFormat('item_{}/output', item.value.id),
         }),
-        processor,
+        processor: (b) => b.pass('identity', (ctx) => ({ prefix: ctx.prefix })),
       })
       .build();
 
@@ -1568,17 +1654,13 @@ describe('map', () => {
       key: string;
     };
 
-    const processor = new SequenceBuilder<{ bucket: string }>()
-      .pass('identity', (ctx) => ({ bucket: ctx.bucket }))
-      .build();
-
     const result = new SequenceBuilder<Ctx>()
-      .map<'processAll', { id: string }>('processAll', {
+      .map('processAll', {
         itemsPath: '$.items',
         itemSelector: (_, ctx) => ({
           bucket: ctx.bucket,
         }),
-        processor,
+        processor: (b) => b.pass('identity', (ctx) => ({ bucket: ctx.bucket })),
       })
       .task(
         'finalize',
@@ -1591,6 +1673,7 @@ describe('map', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'finalize' as const,
           bucket: ctx.bucket,
         })
       )
@@ -1607,15 +1690,11 @@ describe('map', () => {
   it('should omit MaxConcurrency when not specified', () => {
     type Ctx = { items: { id: string }[] };
 
-    const processor = new SequenceBuilder<Record<string, never>>()
-      .pass('noop', () => ({ ok: true }))
-      .build();
-
     const result = new SequenceBuilder<Ctx>()
-      .map<'processAll', { id: string }>('processAll', {
+      .map('processAll', {
         itemsPath: '$.items',
         itemSelector: () => ({}),
-        processor,
+        processor: (b) => b.pass('noop', () => ({ ok: true })),
       })
       .build();
 
@@ -1641,6 +1720,7 @@ describe('pipe', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1655,6 +1735,7 @@ describe('pipe', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1689,6 +1770,7 @@ describe('pipe', () => {
           functionArn: LAMBDA_ARN,
         },
         (ctx) => ({
+          step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
         })
@@ -1702,6 +1784,7 @@ describe('pipe', () => {
         functionArn: LAMBDA_ARN,
       },
       (ctx) => ({
+        step: 'create-video-for-file' as const,
         // This proves the piped task's output is in context
         fileUpload: ctx.loadFileUpload.fileUpload,
         mediaInfo: { width: 1920, height: 1080, duration: 60 },
@@ -1731,7 +1814,11 @@ describe('pipe', () => {
           outputSchema: LoadFileUploadOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'load-file-upload' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       );
 
     const addMediaInfo = <C extends { bucket: string; key: string }>(
@@ -1744,7 +1831,11 @@ describe('pipe', () => {
           outputSchema: RunMediaInfoOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'run-mediainfo' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       );
 
     const result = new SequenceBuilder<Ctx>()
@@ -1905,7 +1996,11 @@ describe('choice', () => {
                   outputSchema: RunMediaInfoOutput,
                   functionArn: LAMBDA_ARN,
                 },
-                (c) => ({ bucket: c.bucket, key: c.key })
+                (c) => ({
+                  step: 'run-mediainfo' as const,
+                  bucket: c.bucket,
+                  key: c.key,
+                })
               ),
           },
         ],
@@ -1920,7 +2015,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -1979,7 +2074,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -2020,7 +2115,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -2085,7 +2180,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -2128,7 +2223,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -2209,7 +2304,7 @@ describe('choice', () => {
             outputSchema: z.object({ done: z.boolean() }),
             functionArn: LAMBDA_ARN,
           },
-          () => ({ bucket: 'x' })
+          () => ({ step: 'finalize' as const, bucket: 'x' })
         )
         .build()
     ).toThrow('Duplicate state name "Duplicate"');
@@ -2337,7 +2432,11 @@ describe('choice', () => {
           outputSchema: LoadFileUploadOutput,
           functionArn: '${load_arn}',
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'load-file-upload' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       )
       .choice('checkType', (ctx) => ({
         choices: [
@@ -2351,7 +2450,11 @@ describe('choice', () => {
                   outputSchema: RunMediaInfoOutput,
                   functionArn: '${mediainfo_arn}',
                 },
-                (c) => ({ bucket: c.bucket, key: c.key })
+                (c) => ({
+                  step: 'run-mediainfo' as const,
+                  bucket: c.bucket,
+                  key: c.key,
+                })
               ),
           },
         ],
@@ -2371,7 +2474,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: '${finalize_arn}',
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
@@ -2386,7 +2489,7 @@ describe('choice', () => {
           Parameters: {
             FunctionName: '${load_arn}',
             Payload: {
-              step: 'load-file-upload',
+              step: 'load-file-upload' as const,
               'bucket.$': '$.bucket',
               'key.$': '$.key',
             },
@@ -2415,7 +2518,7 @@ describe('choice', () => {
           Parameters: {
             FunctionName: '${mediainfo_arn}',
             Payload: {
-              step: 'run-mediainfo',
+              step: 'run-mediainfo' as const,
               'bucket.$': '$.bucket',
               'key.$': '$.key',
             },
@@ -2435,7 +2538,7 @@ describe('choice', () => {
           Parameters: {
             FunctionName: '${finalize_arn}',
             Payload: {
-              step: 'finalize',
+              step: 'finalize' as const,
               'bucket.$': '$.bucket',
             },
           },
@@ -2722,7 +2825,11 @@ describe('pass with Result literal', () => {
           outputSchema: LoadFileUploadOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'load-file-upload' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       )
       .pass('setFlag', { result: true, resultPath: '$.ready' })
       .task(
@@ -2732,7 +2839,11 @@ describe('pass with Result literal', () => {
           outputSchema: RunMediaInfoOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+        (ctx) => ({
+          step: 'run-mediainfo' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        })
       )
       .build();
 
@@ -2789,7 +2900,11 @@ describe('parallel with catch', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ],
         {
@@ -2837,7 +2952,11 @@ describe('parallel with catch', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ],
         {
@@ -2854,7 +2973,11 @@ describe('parallel with catch', () => {
                       outputSchema: LoadFileUploadOutput,
                       functionArn: LAMBDA_ARN,
                     },
-                    (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+                    (ctx) => ({
+                      step: 'load-file-upload' as const,
+                      bucket: ctx.bucket,
+                      key: ctx.key,
+                    })
                   )
                   .fail('failExecution', { cause: 'Processing failed' }),
             },
@@ -2892,7 +3015,11 @@ describe('parallel with catch', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ],
         {
@@ -2923,7 +3050,11 @@ describe('parallel with catch', () => {
             outputSchema: LoadFileUploadOutput,
             functionArn: LAMBDA_ARN,
           },
-          (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+          (ctx) => ({
+            step: 'load-file-upload' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })
         )
         .parallel(
           'main',
@@ -2935,7 +3066,11 @@ describe('parallel with catch', () => {
                 outputSchema: ExtractFramesOutput,
                 functionArn: LAMBDA_ARN,
               },
-              (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+              (ctx) => ({
+                step: 'extract-frames' as const,
+                bucket: ctx.bucket,
+                key: ctx.key,
+              })
             ),
           ],
           {
@@ -2965,7 +3100,11 @@ describe('parallel with catch', () => {
               outputSchema: ExtractFramesOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            })
           ),
         ],
         {
@@ -2988,7 +3127,7 @@ describe('parallel with catch', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
       )
       .build();
 
