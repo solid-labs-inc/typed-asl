@@ -76,7 +76,16 @@ export type AnyZodObject = z.ZodObject<any>;
  * ```
  */
 export type TypedPayloadMapping<T extends AnyZodObject> = {
-  [K in keyof T['shape']]:
+  [K in keyof T['shape'] as undefined extends z.infer<T['shape'][K]>
+    ? never
+    : K]:
+    | z.infer<T['shape'][K]>
+    | Ref<z.infer<T['shape'][K]>>
+    | IntrinsicExpr<z.infer<T['shape'][K]>>;
+} & {
+  [K in keyof T['shape'] as undefined extends z.infer<T['shape'][K]>
+    ? K
+    : never]?:
     | z.infer<T['shape'][K]>
     | Ref<z.infer<T['shape'][K]>>
     | IntrinsicExpr<z.infer<T['shape'][K]>>;
