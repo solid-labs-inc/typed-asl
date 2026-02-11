@@ -10,11 +10,7 @@
   "nx": {
     "sourceRoot": "./src",
     "targets": {
-      "test": {
-        "options": {
-          "passWithNoTests": true
-        }
-      }
+      "test": {}
     }
   }
 }
