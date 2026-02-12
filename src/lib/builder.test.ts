@@ -1515,6 +1515,112 @@ describe('task custom resultSelector', () => {
   });
 });
 
+// ── task() with resultPath: null ─────────────────────────────────────
+
+describe('task with resultPath: null', () => {
+  const TranscodeInput = z.object({
+    task: z.literal('transcode-video'),
+    resolution: z.number(),
+    inputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
+  });
+
+  const TranscodeOutput = z.object({
+    outputStorageRef: z.object({ bucket: z.string(), key: z.string() }),
+    width: z.number(),
+    height: z.number(),
+  });
+
+  it('should omit ResultPath when resultPath is null', () => {
+    type Ctx = {
+      inputStorageRef: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'transcode',
+        {
+          inputSchema: TranscodeInput,
+          outputSchema: TranscodeOutput,
+          functionArn: LAMBDA_ARN,
+          resultPath: null,
+        },
+        (ctx) => ({
+          task: 'transcode-video' as const,
+          resolution: 640,
+          inputStorageRef: ctx.inputStorageRef,
+        })
+      )
+      .build();
+
+    const state = result.States['Transcode'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Task');
+    expect(state).not.toHaveProperty('ResultPath');
+    expect(state['ResultSelector']).toEqual({
+      'outputStorageRef.$': '$.Payload.outputStorageRef',
+      'width.$': '$.Payload.width',
+      'height.$': '$.Payload.height',
+    });
+  });
+
+  it('should omit ResultPath with resultSelector + resultPath: null', () => {
+    type Ctx = {
+      inputStorageRef: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'transcode',
+        {
+          inputSchema: TranscodeInput,
+          outputSchema: TranscodeOutput,
+          functionArn: LAMBDA_ARN,
+          resultSelector: (output) => ({
+            storageRef: output.outputStorageRef,
+          }),
+          resultPath: null,
+        },
+        (ctx) => ({
+          task: 'transcode-video' as const,
+          resolution: 640,
+          inputStorageRef: ctx.inputStorageRef,
+        })
+      )
+      .build();
+
+    const state = result.States['Transcode'] as Record<string, unknown>;
+    expect(state['Type']).toBe('Task');
+    expect(state).not.toHaveProperty('ResultPath');
+    expect(state['ResultSelector']).toEqual({
+      'storageRef.$': '$.Payload.outputStorageRef',
+    });
+  });
+
+  it('should still include ResultPath when resultPath is not specified', () => {
+    type Ctx = {
+      inputStorageRef: { bucket: string; key: string };
+    };
+
+    const result = new SequenceBuilder<Ctx>()
+      .task(
+        'transcode',
+        {
+          inputSchema: TranscodeInput,
+          outputSchema: TranscodeOutput,
+          functionArn: LAMBDA_ARN,
+        },
+        (ctx) => ({
+          task: 'transcode-video' as const,
+          resolution: 640,
+          inputStorageRef: ctx.inputStorageRef,
+        })
+      )
+      .build();
+
+    const state = result.States['Transcode'] as Record<string, unknown>;
+    expect(state['ResultPath']).toBe('$.transcode');
+  });
+});
+
 // ── pass() with resultPath: null ────────────────────────────────────
 
 describe('pass with resultPath: null', () => {
@@ -2150,6 +2256,35 @@ describe('choice', () => {
 
     const defaultPath = result.States['DefaultPath'] as Record<string, unknown>;
     expect(defaultPath['End']).toBe(true);
+  });
+
+  it('should generate an end pass state when choice is last with no default', () => {
+    type Ctx = { flag: boolean | null };
+
+    const result = new SequenceBuilder<Ctx>()
+      .choice('checkFlag', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.flag, isNull: false },
+            then: (b) => b.pass('doWork', () => ({ done: true as const })),
+          },
+        ],
+      }))
+      .build();
+
+    // The conditional branch keeps End: true
+    const doWork = result.States['DoWork'] as Record<string, unknown>;
+    expect(doWork['End']).toBe(true);
+
+    // An auto-generated pass end state is created for the default
+    const endPass = result.States['CheckFlagEnd'] as Record<string, unknown>;
+    expect(endPass).toBeDefined();
+    expect(endPass['Type']).toBe('Pass');
+    expect(endPass['End']).toBe(true);
+
+    // Default points to the auto-generated end state
+    const choice = result.States['CheckFlag'] as Record<string, unknown>;
+    expect(choice['Default']).toBe('CheckFlagEnd');
   });
 
   it('should not rewire Fail states inside choice branches', () => {

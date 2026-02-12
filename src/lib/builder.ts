@@ -105,12 +105,13 @@ export type InferContext<B extends SequenceBuilder<any>> =
  * ```
  */
 export type BranchOutputTuple<
-  Base,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _Base,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   Branches extends readonly SequenceBuilder<any>[]
 > = {
   [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
-    ? Omit<Full, keyof Base>
+    ? Full
     : never;
 };
 
@@ -335,6 +336,34 @@ export class SequenceBuilder<Ctx> {
    */
 
   /**
+   * Overload: `resultSelector` + `resultPath: null` — the selector reshapes
+   * the Lambda output, then the result replaces the entire state input.
+   */
+  task<
+    Name extends string,
+    I extends AnyZodObject,
+    O extends AnyZodObject,
+    R extends Record<string, unknown>
+  >(
+    name: Name,
+    config: LambdaTaskConfig<I, O> & {
+      resultSelector: (output: Proxied<z.infer<O>>) => R;
+      resultPath: null;
+    },
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+  ): SequenceBuilder<UnwrapRefs<R>>;
+
+  /**
+   * Overload: `resultPath: null` without `resultSelector` — the full Lambda
+   * output replaces the entire state input.
+   */
+  task<Name extends string, I extends AnyZodObject, O extends AnyZodObject>(
+    name: Name,
+    config: LambdaTaskConfig<I, O> & { resultPath: null },
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+  ): SequenceBuilder<z.infer<O>>;
+
+  /**
    * Overload: with `resultSelector` — a typed mapping function that remaps
    * the Lambda's actual output (described by `outputSchema`) into the shape
    * stored in the context. The context type is derived from the mapping's
@@ -367,6 +396,7 @@ export class SequenceBuilder<Ctx> {
     name: string,
     config: LambdaTaskConfig<AnyZodObject, AnyZodObject> & {
       resultSelector?: (output: Proxied<unknown>) => Record<string, unknown>;
+      resultPath?: null;
     },
     payloadFn: (ctx: Proxied<Ctx>) => Record<string, unknown>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -388,13 +418,16 @@ export class SequenceBuilder<Ctx> {
     const state: Record<string, unknown> = {
       Type: 'Task',
       Resource: 'arn:aws:states:::lambda:invoke',
-      ResultPath: `$.${name}`,
       ResultSelector: resultSelector,
       Parameters: {
         FunctionName: config.functionArn,
         Payload: aslPayload,
       },
     };
+
+    if (config.resultPath !== null) {
+      state['ResultPath'] = `$.${name}`;
+    }
 
     if (config.retry) {
       state['Retry'] = config.retry;
@@ -864,12 +897,24 @@ export class SequenceBuilder<Ctx> {
         const block = state[CHOICE_MARKER] as ChoiceBlock;
         const choices: Record<string, unknown>[] = [];
 
+        // When the choice is the last state in the sequence, empty branches
+        // and the implicit default need an auto-generated Pass end state
+        // instead of PENDING_NEXT (which would never be resolved).
+        let endPassStateName: string | undefined;
+        const getOrCreateEndPass = (): string => {
+          if (!endPassStateName) {
+            endPassStateName = `${capitalize(name)}End`;
+            states[endPassStateName] = { Type: 'Pass', End: true };
+          }
+          return endPassStateName;
+        };
+
         for (const { condition, builder } of block.branches) {
           if (builder._states.length === 0) {
-            // Empty branch → skip directly to convergence (or defer to parent)
+            // Empty branch → skip directly to convergence (or end)
             choices.push({
               ...condition,
-              Next: nextStateName ?? PENDING_NEXT,
+              Next: nextStateName ?? getOrCreateEndPass(),
             });
           } else {
             const branchMachine = builder.build();
@@ -899,7 +944,7 @@ export class SequenceBuilder<Ctx> {
 
         if (block.defaultBuilder) {
           if (block.defaultBuilder._states.length === 0) {
-            choiceState['Default'] = nextStateName ?? PENDING_NEXT;
+            choiceState['Default'] = nextStateName ?? getOrCreateEndPass();
           } else {
             const defaultMachine = block.defaultBuilder.build();
             for (const bName of Object.keys(defaultMachine.States)) {
@@ -922,7 +967,7 @@ export class SequenceBuilder<Ctx> {
             choiceState['Default'] = defaultMachine.StartAt;
           }
         } else {
-          choiceState['Default'] = nextStateName ?? PENDING_NEXT;
+          choiceState['Default'] = nextStateName ?? getOrCreateEndPass();
         }
 
         states[capitalize(name)] = choiceState;
