@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import { serializeCondition, type ChoiceCondition } from './choice.js';
 import { getExpression, isIntrinsic, type IntrinsicExpr } from './intrinsic.js';
 import type { PathValue } from './path.js';
@@ -38,6 +37,15 @@ export const THROTTLE_RETRY: RetryConfig[] = [
     MaxAttempts: 10,
   },
   ...DEFAULT_RETRY,
+];
+
+export const EXTERNAL_API_RETRY: RetryConfig[] = [
+  {
+    ErrorEquals: ['States.ALL'],
+    IntervalSeconds: 5,
+    BackoffRate: 2,
+    MaxAttempts: 6,
+  },
 ];
 
 // ── Config types ────────────────────────────────────────────────────

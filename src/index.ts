@@ -15,6 +15,7 @@ export {
   SequenceBuilder,
   DEFAULT_RETRY,
   THROTTLE_RETRY,
+  EXTERNAL_API_RETRY,
   serializeParameters,
 } from './lib/builder.js';
 export type {
