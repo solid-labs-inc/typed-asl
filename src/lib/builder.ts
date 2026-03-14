@@ -876,6 +876,31 @@ export class SequenceBuilder<Ctx> {
   }
 
   /**
+   * Append a Succeed state to the sequence.
+   *
+   * A Succeed state terminates the execution successfully. It has no
+   * `Next` or `End` field in ASL. Use this inside choice branches to
+   * end the execution early without error.
+   *
+   * @param name - State name for the Succeed state.
+   *
+   * @example
+   * ```ts
+   * builder.choice('checkDuplicate', ctx => ({
+   *   choices: [{
+   *     when: { variable: ctx.loadResult.duplicate, booleanEquals: true },
+   *     then: b => b.succeed('skipDuplicate'),
+   *   }],
+   *   default: b => b,
+   * }))
+   * ```
+   */
+  succeed(name: string): SequenceBuilder<Ctx> {
+    this._states.push([name, { Type: 'Succeed' }]);
+    return this;
+  }
+
+  /**
    * Build the final ASL state machine structure.
    *
    * Wires up `Next` pointers between sequential states and sets `End: true`
@@ -982,8 +1007,8 @@ export class SequenceBuilder<Ctx> {
         continue;
       }
 
-      // ── Fail state ──────────────────────────────────────────────
-      if (state['Type'] === 'Fail') {
+      // ── Terminal states (Fail / Succeed) ────────────────────────
+      if (state['Type'] === 'Fail' || state['Type'] === 'Succeed') {
         states[capitalize(name)] = { ...state };
         continue;
       }
@@ -1050,7 +1075,11 @@ function rewireTerminals(
   nextStateName: string
 ): void {
   for (const state of Object.values(states)) {
-    if (state['End'] === true && state['Type'] !== 'Fail') {
+    if (
+      state['End'] === true &&
+      state['Type'] !== 'Fail' &&
+      state['Type'] !== 'Succeed'
+    ) {
       delete state['End'];
       state['Next'] = nextStateName;
     }
