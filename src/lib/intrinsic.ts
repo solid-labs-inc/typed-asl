@@ -108,9 +108,9 @@ export function statesJsonToString(ref: Ref<unknown>): IntrinsicExpr<string> {
  */
 export function statesMathAdd(
   ref: Ref<unknown>,
-  operand: number
+  operand: number,
 ): IntrinsicExpr<number> {
   return createIntrinsic<number>(
-    `States.MathAdd(${argToString(ref)}, ${operand})`
+    `States.MathAdd(${argToString(ref)}, ${operand})`,
   );
 }

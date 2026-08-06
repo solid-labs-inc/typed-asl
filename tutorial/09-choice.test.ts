@@ -119,7 +119,7 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
                 (c) => ({
                   step: 'process-video' as const,
                   assetType: c.assetType,
-                })
+                }),
               ),
           },
           {
@@ -135,7 +135,7 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
                 (c) => ({
                   step: 'process-image' as const,
                   assetType: c.assetType,
-                })
+                }),
               ),
           },
         ],
@@ -153,7 +153,7 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
           outputSchema: FinalizeOutput,
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, assetType: ctx.assetType })
+        (ctx) => ({ step: 'finalize' as const, assetType: ctx.assetType }),
       )
       .build();
 
@@ -201,7 +201,7 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
                   outputSchema: DoWorkOutput,
                   functionArn: LAMBDA_ARN,
                 },
-                () => ({ step: 'do-work' as const })
+                () => ({ step: 'do-work' as const }),
               ),
           },
         ],

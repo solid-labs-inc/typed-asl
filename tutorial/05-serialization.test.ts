@@ -170,7 +170,7 @@ describe('Chapter 5: Serialization — Refs Become ASL', () => {
       label: statesFormat(
         '{}_{}',
         ctx.loadFile.fileUpload.id,
-        ctx.runMediaInfo.mediaInfo.width
+        ctx.runMediaInfo.mediaInfo.width,
       ),
     });
 

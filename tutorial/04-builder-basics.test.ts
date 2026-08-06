@@ -67,7 +67,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
           step: 'load-file' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .build();
 
@@ -98,7 +98,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
           step: 'load-file' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'analyze',
@@ -113,7 +113,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
           step: 'analyze' as const,
           fileId: ctx.loadFile.fileUpload.id,
           filename: ctx.loadFile.fileUpload.filename,
-        })
+        }),
       )
       .build();
 
@@ -147,7 +147,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
         step: 'load-file' as const,
         bucket: ctx.bucket,
         key: ctx.key,
-      })
+      }),
     );
 
     // After loadFile, the builder's context type is:
@@ -168,7 +168,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
         step: 'analyze' as const,
         fileId: ctx.loadFile.fileUpload.id,
         filename: ctx.loadFile.fileUpload.filename,
-      })
+      }),
     );
 
     // After analyze, context also includes analyze output:
@@ -195,7 +195,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
           step: 'load-file' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       // Use a Pass state to extract/reshape fields for downstream use
       .pass('summary', (ctx) => ({
@@ -246,7 +246,7 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
           step: 'load-file' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .build();
 

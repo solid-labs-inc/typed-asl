@@ -52,14 +52,14 @@ describe('SequenceBuilder.map inference', () => {
     // This is the goal syntax
     new SequenceBuilder<MyContext>().map('testMap', {
       itemsPath: '$.items',
-      itemSelector: (item, ctx) => {
+      itemSelector: (item, _ctx) => {
         // item.value should be { id: string }
         expectTypeOf(item.value.id).toEqualTypeOf<Proxied<string>>();
         return {
           myId: item.value.id,
         };
       },
-      processor: (b) => b.pass('placeholder', (ctx) => ({})),
+      processor: (b) => b.pass('placeholder', (_ctx) => ({})),
     });
   });
 });

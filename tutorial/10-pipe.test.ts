@@ -59,9 +59,9 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
   // This function can be used in any pipeline that has extracted frames.
   // The generic constraint ensures `ctx.extractFrames.frameStorageRefs` exists.
   const addCreateAtlas = <
-    Ctx extends { extractFrames: { frameStorageRefs: StorageRefType[] } }
+    Ctx extends { extractFrames: { frameStorageRefs: StorageRefType[] } },
   >(
-    b: SequenceBuilder<Ctx>
+    b: SequenceBuilder<Ctx>,
   ) =>
     b.task(
       'createAtlas',
@@ -74,14 +74,14 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
         step: 'create-atlas' as const,
         frameStorageRefs: ctx.extractFrames.frameStorageRefs,
         outputFilename: 'atlas.webp',
-      })
+      }),
     );
 
   // Another reusable function — generates embeddings from extracted frames.
   const addGenerateEmbedding = <
-    Ctx extends { extractFrames: { frameStorageRefs: StorageRefType[] } }
+    Ctx extends { extractFrames: { frameStorageRefs: StorageRefType[] } },
   >(
-    b: SequenceBuilder<Ctx>
+    b: SequenceBuilder<Ctx>,
   ) =>
     b.task(
       'generateEmbedding',
@@ -93,7 +93,7 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
       (ctx) => ({
         step: 'generate-embedding' as const,
         frameStorageRefs: ctx.extractFrames.frameStorageRefs,
-      })
+      }),
     );
 
   // ── Using pipe ───────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
           step: 'extract-frames' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       // Instead of inlining the createAtlas task, pipe it in
       .pipe(addCreateAtlas)
@@ -127,7 +127,7 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
     // The createAtlas payload correctly references extractFrames output
     const atlasPayload = (asl.States.CreateAtlas as any).Parameters.Payload;
     expect(atlasPayload['frameStorageRefs.$']).toBe(
-      '$.extractFrames.frameStorageRefs'
+      '$.extractFrames.frameStorageRefs',
     );
   });
 
@@ -148,7 +148,7 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
           step: 'extract-frames' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .pipe(addCreateAtlas)
       .pipe(addGenerateEmbedding)
@@ -177,7 +177,7 @@ describe('Chapter 10: Reusable Compositions via .pipe()', () => {
           step: 'extract-frames' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .pipe(addCreateAtlas)
       .pipe(addGenerateEmbedding);

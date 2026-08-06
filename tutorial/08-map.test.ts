@@ -99,7 +99,7 @@ describe('Chapter 8: Map — Iteration with Dual Context', () => {
               startFrame: ctx.startFrame, // number
               endFrame: ctx.endFrame, // number
               outputBucket: ctx.outputBucket, // string
-            })
+            }),
           ),
       })
       .build();
@@ -151,7 +151,7 @@ describe('Chapter 8: Map — Iteration with Dual Context', () => {
             startFrame: ctx.startFrame,
             endFrame: ctx.endFrame,
             outputBucket: ctx.outputBucket,
-          })
+          }),
         ),
     });
 
@@ -196,7 +196,7 @@ describe('Chapter 8: Map — Iteration with Dual Context', () => {
               startFrame: ctx.startFrame,
               endFrame: ctx.endFrame,
               outputBucket: ctx.outputBucket,
-            })
+            }),
           ),
       })
       .task(
@@ -210,7 +210,7 @@ describe('Chapter 8: Map — Iteration with Dual Context', () => {
           // Reference the entire map output array
           step: 'finalize' as const,
           sceneResults: ctx.processScenes,
-        })
+        }),
       )
       .build();
 

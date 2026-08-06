@@ -154,7 +154,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -184,7 +184,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .task(
           'runMediaInfo',
@@ -197,7 +197,7 @@ describe('SequenceBuilder', () => {
             step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -227,7 +227,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .task(
           'runMediaInfo',
@@ -240,7 +240,7 @@ describe('SequenceBuilder', () => {
             step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .task(
           'createVideo',
@@ -253,7 +253,7 @@ describe('SequenceBuilder', () => {
             step: 'create-video-for-file' as const,
             fileUpload: ctx.loadFileUpload.fileUpload,
             mediaInfo: ctx.runMediaInfo.mediaInfo,
-          })
+          }),
         )
         .build();
 
@@ -286,7 +286,7 @@ describe('SequenceBuilder', () => {
             step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -312,7 +312,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -345,7 +345,7 @@ describe('SequenceBuilder', () => {
             step: 'transcribe-video' as const,
             videoId: ctx.videoId,
             audioStorageRef: null,
-          })
+          }),
         )
         .build();
 
@@ -373,7 +373,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .task(
           'runMediaInfo',
@@ -386,7 +386,7 @@ describe('SequenceBuilder', () => {
             step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .task(
           'createVideo',
@@ -399,7 +399,7 @@ describe('SequenceBuilder', () => {
             step: 'create-video-for-file' as const,
             fileUpload: ctx.loadFileUpload.fileUpload,
             mediaInfo: ctx.runMediaInfo.mediaInfo,
-          })
+          }),
         )
         .build();
 
@@ -429,7 +429,7 @@ describe('SequenceBuilder', () => {
             step: 'run-mediainfo' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -458,7 +458,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -481,7 +481,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -505,7 +505,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -533,7 +533,7 @@ describe('SequenceBuilder', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
           new SequenceBuilder<Ctx>().task(
             'transcodePreview',
@@ -546,7 +546,7 @@ describe('SequenceBuilder', () => {
               step: 'transcode-preview' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ])
         .build();
@@ -587,7 +587,7 @@ describe('SequenceBuilder', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
           new SequenceBuilder<Ctx>().task(
             'transcodePreview',
@@ -600,7 +600,7 @@ describe('SequenceBuilder', () => {
               step: 'transcode-preview' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ])
         .task(
@@ -615,7 +615,7 @@ describe('SequenceBuilder', () => {
             width: ctx.process[0].extractFrames.width,
             previewStorageRef:
               ctx.process[1].transcodePreview.previewStorageRef,
-          })
+          }),
         )
         .build();
 
@@ -645,7 +645,7 @@ describe('SequenceBuilder', () => {
                 step: 'extract-frames' as const,
                 bucket: ctx.bucket,
                 key: ctx.key,
-              })
+              }),
             )
             .parallel('descriptions', [
               new SequenceBuilder<
@@ -665,7 +665,7 @@ describe('SequenceBuilder', () => {
                 (ctx) => ({
                   step: 'generate-embedding' as const,
                   frameStorageRefs: ctx.extractFrames.frameStorageRefs,
-                })
+                }),
               ),
             ]),
           // Branch 1: single task
@@ -680,7 +680,7 @@ describe('SequenceBuilder', () => {
               step: 'transcode-preview' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ])
         .build();
@@ -784,7 +784,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .pass('reshape', (ctx) => ({
           fileId: ctx.loadFileUpload.fileUpload.id,
@@ -815,7 +815,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build({ comment: 'Asset Extraction' });
 
@@ -837,7 +837,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -862,7 +862,7 @@ describe('SequenceBuilder', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .build();
 
@@ -892,7 +892,7 @@ describe('SequenceBuilder JSON output', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'runMediaInfo',
@@ -906,7 +906,7 @@ describe('SequenceBuilder JSON output', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'createVideo',
@@ -919,7 +919,7 @@ describe('SequenceBuilder JSON output', () => {
           step: 'create-video-for-file' as const,
           fileUpload: ctx.loadFileUpload.fileUpload,
           mediaInfo: ctx.runMediaInfo.mediaInfo,
-        })
+        }),
       )
       .build();
 
@@ -1002,7 +1002,7 @@ describe('SequenceBuilder JSON output', () => {
             step: 'extract-frames' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
         new SequenceBuilder<Ctx>().task(
           'transcodePreview',
@@ -1015,7 +1015,7 @@ describe('SequenceBuilder JSON output', () => {
             step: 'transcode-preview' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
       ])
       .task(
@@ -1029,7 +1029,7 @@ describe('SequenceBuilder JSON output', () => {
           step: 'finalize' as const,
           width: ctx.process[0].extractFrames.width,
           previewStorageRef: ctx.process[1].transcodePreview.previewStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1129,7 +1129,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'runMediaInfo',
@@ -1142,15 +1142,14 @@ describe('SequenceBuilder type safety', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       );
 
     expect(builder).toBeDefined();
 
     // After two tasks, the builder's context should include both outputs
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     // Original context fields
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -1184,7 +1183,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'runMediaInfo',
@@ -1197,7 +1196,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .task(
         'createVideo',
@@ -1210,7 +1209,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'create-video-for-file' as const,
           fileUpload: ctx.loadFileUpload.fileUpload,
           mediaInfo: ctx.runMediaInfo.mediaInfo,
-        })
+        }),
       );
 
     expect(builder).toBeDefined();
@@ -1270,7 +1269,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'extract-frames' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       ),
       new SequenceBuilder<Ctx>().task(
         'transcodePreview',
@@ -1283,15 +1282,14 @@ describe('SequenceBuilder type safety', () => {
           step: 'transcode-preview' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       ),
     ]);
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     // Original context preserved
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -1302,13 +1300,13 @@ describe('SequenceBuilder type safety', () => {
     // Branch 0 delta has extractFrames
     expectTypeOf<ResultCtx['process'][0]>().toHaveProperty('extractFrames');
     expectTypeOf<ResultCtx['process'][0]['extractFrames']>().toHaveProperty(
-      'width'
+      'width',
     );
 
     // Branch 1 delta has transcodePreview
     expectTypeOf<ResultCtx['process'][1]>().toHaveProperty('transcodePreview');
     expectTypeOf<ResultCtx['process'][1]['transcodePreview']>().toHaveProperty(
-      'previewStorageRef'
+      'previewStorageRef',
     );
   });
 
@@ -1330,7 +1328,7 @@ describe('SequenceBuilder type safety', () => {
             step: 'extract-frames' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
         new SequenceBuilder<Ctx>().task(
           'transcodePreview',
@@ -1343,7 +1341,7 @@ describe('SequenceBuilder type safety', () => {
             step: 'transcode-preview' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
       ])
       .task(
@@ -1357,7 +1355,7 @@ describe('SequenceBuilder type safety', () => {
           step: 'finalize' as const,
           width: ctx.process[0].extractFrames.width,
           previewStorageRef: ctx.process[1].transcodePreview.previewStorageRef,
-        })
+        }),
       );
 
     expect(builder).toBeDefined();
@@ -1377,9 +1375,8 @@ describe('SequenceBuilder type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     expectTypeOf<ResultCtx>().toHaveProperty('filterOutput');
     // Ref fields are unwrapped to their underlying types
@@ -1404,7 +1401,7 @@ describe('intrinsic functions', () => {
 
     const expr = statesFormat('scene_{}/frame', item.value.id);
     expect(getExpression(expr)).toBe(
-      "States.Format('scene_{}/frame', $$.Map.Item.Value.id)"
+      "States.Format('scene_{}/frame', $$.Map.Item.Value.id)",
     );
   });
 
@@ -1427,7 +1424,7 @@ describe('task discriminator field', () => {
 
   const TaskOutput = z.object({
     frameStorageRefs: z.array(
-      z.object({ bucket: z.string(), key: z.string() })
+      z.object({ bucket: z.string(), key: z.string() }),
     ),
     width: z.number(),
   });
@@ -1449,7 +1446,7 @@ describe('task discriminator field', () => {
           task: 'extract-frames' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1502,7 +1499,7 @@ describe('task custom resultSelector', () => {
           task: 'transcode-video' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1548,7 +1545,7 @@ describe('task with resultPath: null', () => {
           task: 'transcode-video' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1583,7 +1580,7 @@ describe('task with resultPath: null', () => {
           task: 'transcode-video' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1612,7 +1609,7 @@ describe('task with resultPath: null', () => {
           task: 'transcode-video' as const,
           resolution: 640,
           inputStorageRef: ctx.inputStorageRef,
-        })
+        }),
       )
       .build();
 
@@ -1639,7 +1636,7 @@ describe('pass with resultPath: null', () => {
           end_seconds: ctx.scene.end_seconds,
           videoId: ctx.createVideoAsset.videoId,
         }),
-        { resultPath: null }
+        { resultPath: null },
       )
       .build();
 
@@ -1692,7 +1689,7 @@ describe('map', () => {
         maxConcurrency: 3,
         itemSelector: (
           item: MapItemRef<{ id: string; name: string }>,
-          ctx
+          ctx,
         ) => ({
           name: item.value.name,
           itemIndex: item.index,
@@ -1706,7 +1703,7 @@ describe('map', () => {
               outputSchema: ProcessOutput,
               functionArn: LAMBDA_ARN,
             },
-            (ctx) => ({ step: 'process-item' as const, name: ctx.name })
+            (ctx) => ({ step: 'process-item' as const, name: ctx.name }),
           ),
       })
       .build();
@@ -1749,7 +1746,7 @@ describe('map', () => {
     const state = result.States['ProcessAll'] as Record<string, unknown>;
     const selector = state['ItemSelector'] as Record<string, unknown>;
     expect(selector['prefix.$']).toBe(
-      "States.Format('item_{}/output', $$.Map.Item.Value.id)"
+      "States.Format('item_{}/output', $$.Map.Item.Value.id)",
     );
   });
 
@@ -1781,7 +1778,7 @@ describe('map', () => {
         (ctx) => ({
           step: 'finalize' as const,
           bucket: ctx.bucket,
-        })
+        }),
       )
       .build();
 
@@ -1816,7 +1813,7 @@ describe('pipe', () => {
     type Ctx = { bucket: string; key: string };
 
     const addRunMediaInfo = <C extends { bucket: string; key: string }>(
-      b: SequenceBuilder<C>
+      b: SequenceBuilder<C>,
     ) =>
       b.task(
         'runMediaInfo',
@@ -1829,7 +1826,7 @@ describe('pipe', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       );
 
     const result = new SequenceBuilder<Ctx>()
@@ -1844,7 +1841,7 @@ describe('pipe', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .pipe(addRunMediaInfo)
       .build();
@@ -1866,7 +1863,7 @@ describe('pipe', () => {
     type Ctx = { bucket: string; key: string };
 
     const addLoadFileUpload = <C extends { bucket: string; key: string }>(
-      b: SequenceBuilder<C>
+      b: SequenceBuilder<C>,
     ) =>
       b.task(
         'loadFileUpload',
@@ -1879,7 +1876,7 @@ describe('pipe', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       );
 
     const builder = new SequenceBuilder<Ctx>().pipe(addLoadFileUpload).task(
@@ -1894,14 +1891,13 @@ describe('pipe', () => {
         // This proves the piped task's output is in context
         fileUpload: ctx.loadFileUpload.fileUpload,
         mediaInfo: { width: 1920, height: 1080, duration: 60 },
-      })
+      }),
     );
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     expectTypeOf<ResultCtx>().toHaveProperty('loadFileUpload');
     expectTypeOf<ResultCtx>().toHaveProperty('createVideo');
@@ -1911,7 +1907,7 @@ describe('pipe', () => {
     type Ctx = { bucket: string; key: string };
 
     const addLoad = <C extends { bucket: string; key: string }>(
-      b: SequenceBuilder<C>
+      b: SequenceBuilder<C>,
     ) =>
       b.task(
         'loadFileUpload',
@@ -1924,11 +1920,11 @@ describe('pipe', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       );
 
     const addMediaInfo = <C extends { bucket: string; key: string }>(
-      b: SequenceBuilder<C>
+      b: SequenceBuilder<C>,
     ) =>
       b.task(
         'runMediaInfo',
@@ -1941,7 +1937,7 @@ describe('pipe', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       );
 
     const result = new SequenceBuilder<Ctx>()
@@ -2002,7 +1998,7 @@ describe('customTask', () => {
     expect(params['JobDefinition']).toBe('${job_definition_arn}');
     expect(params['JobQueue']).toBe('${job_queue_arn}');
     expect(params['JobName.$']).toBe(
-      "States.Format('Transcode-Extraction-{}', $.parentVideoId)"
+      "States.Format('Transcode-Extraction-{}', $.parentVideoId)",
     );
 
     const overrides = params['ContainerOverrides'] as Record<string, unknown>;
@@ -2106,7 +2102,7 @@ describe('choice', () => {
                   step: 'run-mediainfo' as const,
                   bucket: c.bucket,
                   key: c.key,
-                })
+                }),
               ),
           },
         ],
@@ -2121,7 +2117,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2180,7 +2176,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2221,7 +2217,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2315,7 +2311,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2358,7 +2354,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2439,9 +2435,9 @@ describe('choice', () => {
             outputSchema: z.object({ done: z.boolean() }),
             functionArn: LAMBDA_ARN,
           },
-          () => ({ step: 'finalize' as const, bucket: 'x' })
+          () => ({ step: 'finalize' as const, bucket: 'x' }),
         )
-        .build()
+        .build(),
     ).toThrow('Duplicate state name "Duplicate"');
   });
 
@@ -2571,7 +2567,7 @@ describe('choice', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .choice('checkType', (ctx) => ({
         choices: [
@@ -2589,7 +2585,7 @@ describe('choice', () => {
                   step: 'run-mediainfo' as const,
                   bucket: c.bucket,
                   key: c.key,
-                })
+                }),
               ),
           },
         ],
@@ -2609,7 +2605,7 @@ describe('choice', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: '${finalize_arn}',
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 
@@ -2866,9 +2862,8 @@ describe('choice/fail type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
   });
@@ -2882,9 +2877,8 @@ describe('choice/fail type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
   });
@@ -2964,7 +2958,7 @@ describe('pass with Result literal', () => {
           step: 'load-file-upload' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .pass('setFlag', { result: true, resultPath: '$.ready' })
       .task(
@@ -2978,7 +2972,7 @@ describe('pass with Result literal', () => {
           step: 'run-mediainfo' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .build();
 
@@ -3006,9 +3000,8 @@ describe('pass with Result literal', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx = typeof builder extends SequenceBuilder<infer C>
-      ? C
-      : never;
+    type ResultCtx =
+      typeof builder extends SequenceBuilder<infer C> ? C : never;
 
     // Original context preserved
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -3039,7 +3032,7 @@ describe('parallel with catch', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ],
         {
@@ -3054,7 +3047,7 @@ describe('parallel with catch', () => {
                 }),
             },
           ],
-        }
+        },
       )
       .build();
 
@@ -3091,7 +3084,7 @@ describe('parallel with catch', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ],
         {
@@ -3112,12 +3105,12 @@ describe('parallel with catch', () => {
                       step: 'load-file-upload' as const,
                       bucket: ctx.bucket,
                       key: ctx.key,
-                    })
+                    }),
                   )
                   .fail('failExecution', { cause: 'Processing failed' }),
             },
           ],
-        }
+        },
       )
       .build();
 
@@ -3154,7 +3147,7 @@ describe('parallel with catch', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ],
         {
@@ -3164,7 +3157,7 @@ describe('parallel with catch', () => {
               handler: (b) => b.fail('handleError', { error: 'Failed' }),
             },
           ],
-        }
+        },
       )
       .build();
 
@@ -3189,7 +3182,7 @@ describe('parallel with catch', () => {
             step: 'load-file-upload' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         )
         .parallel(
           'main',
@@ -3205,7 +3198,7 @@ describe('parallel with catch', () => {
                 step: 'extract-frames' as const,
                 bucket: ctx.bucket,
                 key: ctx.key,
-              })
+              }),
             ),
           ],
           {
@@ -3215,9 +3208,9 @@ describe('parallel with catch', () => {
                 handler: (b) => b.fail('handleError', { error: 'Failed' }),
               },
             ],
-          }
+          },
         )
-        .build()
+        .build(),
     ).toThrow('Duplicate state name "HandleError"');
   });
 
@@ -3239,7 +3232,7 @@ describe('parallel with catch', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ],
         {
@@ -3250,7 +3243,7 @@ describe('parallel with catch', () => {
               handler: (b) => b.fail('handleError', { error: 'Failed' }),
             },
           ],
-        }
+        },
       )
       .task(
         'finalize',
@@ -3262,7 +3255,7 @@ describe('parallel with catch', () => {
           outputSchema: z.object({ done: z.boolean() }),
           functionArn: LAMBDA_ARN,
         },
-        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket })
+        (ctx) => ({ step: 'finalize' as const, bucket: ctx.bucket }),
       )
       .build();
 

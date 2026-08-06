@@ -39,7 +39,7 @@ describe('Chapter 6: Intrinsic Functions', () => {
 
     // The expression string
     expect(getExpression(expr)).toBe(
-      "States.Format('scene_{}/frame_{}', $.sceneId, $.frameIndex)"
+      "States.Format('scene_{}/frame_{}', $.sceneId, $.frameIndex)",
     );
 
     // The phantom type is string (format always returns a string)
@@ -98,7 +98,7 @@ describe('Chapter 6: Intrinsic Functions', () => {
     const outer = statesFormat('payload: {}', inner);
 
     expect(getExpression(outer)).toBe(
-      "States.Format('payload: {}', States.JsonToString($.data))"
+      "States.Format('payload: {}', States.JsonToString($.data))",
     );
   });
 

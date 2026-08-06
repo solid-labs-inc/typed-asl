@@ -4,7 +4,6 @@ import { z } from 'zod';
 import type { Proxied, Ref, TypedPayloadMapping } from './types.js';
 
 // ── Test schemas (used via typeof in type-level assertions) ─────────
-/* eslint-disable @typescript-eslint/no-unused-vars */
 
 const StorageRefSchema = z.object({ bucket: z.string(), key: z.string() });
 

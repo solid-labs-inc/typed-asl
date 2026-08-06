@@ -34,12 +34,12 @@ type ContextWithTuple = {
       generateDescriptions: [
         { embedding: number[] },
         { description: string; embedding: number[] },
-        { thumbnailStorageRef: StorageRef; atlasStorageRef: StorageRef }
+        { thumbnailStorageRef: StorageRef; atlasStorageRef: StorageRef },
       ];
     },
     {
       transcodePreview: { storageRef: StorageRef };
-    }
+    },
   ];
 };
 
@@ -142,14 +142,14 @@ describe('pathOf', () => {
   it('should produce a dot-separated path for nested properties', () => {
     const proxy = createProxy<SimpleContext>();
     expect(pathOf(proxy.fileUpload.organizationId)).toBe(
-      '$.fileUpload.organizationId'
+      '$.fileUpload.organizationId',
     );
   });
 
   it('should attach array indices without a dot', () => {
     const proxy = createProxy<ContextWithArray>();
     expect(pathOf(proxy.scenes[0].start_seconds)).toBe(
-      '$.scenes[0].start_seconds'
+      '$.scenes[0].start_seconds',
     );
   });
 
@@ -162,14 +162,14 @@ describe('pathOf', () => {
   it('should handle the full parallel branch path pattern', () => {
     const proxy = createProxy<ContextWithTuple>();
     expect(
-      pathOf(proxy.processScene[0].generateDescriptions[2].thumbnailStorageRef)
+      pathOf(proxy.processScene[0].generateDescriptions[2].thumbnailStorageRef),
     ).toBe('$.processScene[0].generateDescriptions[2].thumbnailStorageRef');
   });
 
   it('should handle mixed property and index access', () => {
     const proxy = createProxy<ContextWithTuple>();
     expect(pathOf(proxy.processScene[1].transcodePreview.storageRef)).toBe(
-      '$.processScene[1].transcodePreview.storageRef'
+      '$.processScene[1].transcodePreview.storageRef',
     );
   });
 

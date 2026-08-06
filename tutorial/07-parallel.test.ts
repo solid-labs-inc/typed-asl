@@ -66,7 +66,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
             step: 'extract-frames' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
         // Branch 1: transcode
         new SequenceBuilder<Input>().task(
@@ -80,7 +80,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
             step: 'transcode' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
       ])
       .build();
@@ -110,7 +110,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
           step: 'extract-frames' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       ),
       new SequenceBuilder<Input>().task(
         'transcode',
@@ -123,7 +123,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
           step: 'transcode' as const,
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       ),
     ]);
 
@@ -162,7 +162,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
             step: 'extract-frames' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
         new SequenceBuilder<Input>().task(
           'transcode',
@@ -175,7 +175,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
             step: 'transcode' as const,
             bucket: ctx.bucket,
             key: ctx.key,
-          })
+          }),
         ),
       ])
       .task(
@@ -191,13 +191,13 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
           previewStorageRef: ctx.process[1].transcode.previewStorageRef,
           // Static value (not from parallel output)
           frameCount: 30,
-        })
+        }),
       )
       .build();
 
     const finalizePayload = (asl.States.Finalize as any).Parameters.Payload;
     expect(finalizePayload['previewStorageRef.$']).toBe(
-      '$.process[1].transcode.previewStorageRef'
+      '$.process[1].transcode.previewStorageRef',
     );
     expect(finalizePayload.frameCount).toBe(30);
   });
@@ -226,7 +226,7 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
               step: 'extract-frames' as const,
               bucket: ctx.bucket,
               key: ctx.key,
-            })
+            }),
           ),
         ],
         {
@@ -245,11 +245,11 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
                   (ctx) => ({
                     step: 'handle-error' as const,
                     errorInfo: ctx.error,
-                  })
+                  }),
                 ),
             },
           ],
-        }
+        },
       )
       .build();
 

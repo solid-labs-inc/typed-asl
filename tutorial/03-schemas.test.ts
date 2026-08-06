@@ -75,7 +75,7 @@ describe('Chapter 3: Zod Schemas as the Contract', () => {
         (ctx) => ({
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .build();
 
@@ -101,7 +101,7 @@ describe('Chapter 3: Zod Schemas as the Contract', () => {
         (ctx) => ({
           bucket: ctx.bucket,
           key: ctx.key,
-        })
+        }),
       )
       .build();
 
@@ -138,7 +138,7 @@ describe('Chapter 3: Zod Schemas as the Contract', () => {
           storageRef: output.outputStorageRef,
         }),
       },
-      (ctx) => ({ url: ctx.url })
+      (ctx) => ({ url: ctx.url }),
     );
     type Output = InferContext<typeof builder>;
 

@@ -49,7 +49,7 @@ describe('Chapter 2: Proxied<T> — Property Access Tracing', () => {
 
     const ctx = createProxy<State>();
     expect(pathOf(ctx.video.metadata.tracks.audio.codec)).toBe(
-      '$.video.metadata.tracks.audio.codec'
+      '$.video.metadata.tracks.audio.codec',
     );
   });
 
@@ -75,7 +75,7 @@ describe('Chapter 2: Proxied<T> — Property Access Tracing', () => {
     // This is important for parallel branch outputs (chapter 7).
     type ParallelOutput = [
       { extractedFrames: string[] },
-      { transcodedUrl: string }
+      { transcodedUrl: string },
     ];
 
     const ctx = createProxy<{ process: ParallelOutput }>();
@@ -88,10 +88,10 @@ describe('Chapter 2: Proxied<T> — Property Access Tracing', () => {
 
     // The paths are correct
     expect(pathOf(ctx.process[0].extractedFrames)).toBe(
-      '$.process[0].extractedFrames'
+      '$.process[0].extractedFrames',
     );
     expect(pathOf(ctx.process[1].transcodedUrl)).toBe(
-      '$.process[1].transcodedUrl'
+      '$.process[1].transcodedUrl',
     );
   });
 

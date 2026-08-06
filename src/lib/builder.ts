@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import { serializeCondition, type ChoiceCondition } from './choice.js';
 import { getExpression, isIntrinsic, type IntrinsicExpr } from './intrinsic.js';
 import type { PathValue } from './path.js';
@@ -52,7 +52,7 @@ export const EXTERNAL_API_RETRY: RetryConfig[] = [
 
 export interface LambdaTaskConfig<
   I extends AnyZodObject,
-  O extends AnyZodObject
+  O extends AnyZodObject,
 > {
   inputSchema: I;
   outputSchema: O;
@@ -74,8 +74,8 @@ export type UnwrapRefs<M> = {
   [K in keyof M]: M[K] extends Ref<infer U>
     ? U
     : M[K] extends IntrinsicExpr<infer U>
-    ? U
-    : M[K];
+      ? U
+      : M[K];
 };
 
 /**
@@ -116,7 +116,7 @@ export type BranchOutputTuple<
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _Base,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Branches extends readonly SequenceBuilder<any>[]
+  Branches extends readonly SequenceBuilder<any>[],
 > = {
   [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
     ? Full
@@ -135,7 +135,7 @@ export interface MapConfig<
   Ctx,
   ItemType,
   S extends Record<string, unknown>,
-  ProcessorCtx
+  ProcessorCtx,
 > {
   /** JSONPath to the array to iterate (e.g. `'$.scenes'`). */
   itemsPath: string;
@@ -162,7 +162,7 @@ export interface MapConfig<
    * ```
    */
   processor: (
-    b: SequenceBuilder<UnwrapRefs<S>>
+    b: SequenceBuilder<UnwrapRefs<S>>,
   ) => SequenceBuilder<ProcessorCtx>;
 }
 
@@ -205,7 +205,8 @@ export interface CatchConfig<Ctx, Key extends string = never> {
   resultPath?: `$.${Key}`;
 
   handler: (
-    b: SequenceBuilder<Ctx & Record<Key, unknown>>
+    b: SequenceBuilder<Ctx & Record<Key, unknown>>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) => SequenceBuilder<any>;
 }
 
@@ -324,7 +325,7 @@ export class SequenceBuilder<Ctx> {
    * ```
    */
   pipe<NewCtx>(
-    fn: (builder: SequenceBuilder<Ctx>) => SequenceBuilder<NewCtx>
+    fn: (builder: SequenceBuilder<Ctx>) => SequenceBuilder<NewCtx>,
   ): SequenceBuilder<NewCtx> {
     return fn(this);
   }
@@ -351,14 +352,14 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
-    R extends Record<string, unknown>
+    R extends Record<string, unknown>,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
       resultPath: null;
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<UnwrapRefs<R>>;
 
   /**
@@ -368,7 +369,7 @@ export class SequenceBuilder<Ctx> {
   task<Name extends string, I extends AnyZodObject, O extends AnyZodObject>(
     name: Name,
     config: LambdaTaskConfig<I, O> & { resultPath: null },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<z.infer<O>>;
 
   /**
@@ -381,13 +382,13 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
-    R extends Record<string, unknown>
+    R extends Record<string, unknown>,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<R>>>;
 
   /**
@@ -397,7 +398,7 @@ export class SequenceBuilder<Ctx> {
   task<Name extends string, I extends AnyZodObject, O extends AnyZodObject>(
     name: Name,
     config: LambdaTaskConfig<I, O>,
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>
+    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
 
   task(
@@ -406,7 +407,7 @@ export class SequenceBuilder<Ctx> {
       resultSelector?: (output: Proxied<unknown>) => Record<string, unknown>;
       resultPath?: null;
     },
-    payloadFn: (ctx: Proxied<Ctx>) => Record<string, unknown>
+    payloadFn: (ctx: Proxied<Ctx>) => Record<string, unknown>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const proxy = createProxy<Ctx>();
@@ -477,11 +478,11 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Branches extends readonly SequenceBuilder<any>[],
-    CatchKey extends string = never
+    CatchKey extends string = never,
   >(
     name: Name,
     branches: [...Branches],
-    options?: { catch?: CatchConfig<Ctx, CatchKey>[] }
+    options?: { catch?: CatchConfig<Ctx, CatchKey>[] },
   ): SequenceBuilder<Ctx & Record<Name, BranchOutputTuple<Ctx, Branches>>>;
 
   parallel(
@@ -489,7 +490,7 @@ export class SequenceBuilder<Ctx> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     branches: SequenceBuilder<any>[],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    options?: { catch?: CatchConfig<any, any>[] }
+    options?: { catch?: CatchConfig<any, any>[] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const aslBranches = branches.map((b) => b.build());
@@ -542,7 +543,7 @@ export class SequenceBuilder<Ctx> {
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
-    options: { resultPath: null }
+    options: { resultPath: null },
   ): SequenceBuilder<UnwrapRefs<M>>;
 
   /**
@@ -550,7 +551,7 @@ export class SequenceBuilder<Ctx> {
    */
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
-    mappingFn: (ctx: Proxied<Ctx>) => M
+    mappingFn: (ctx: Proxied<Ctx>) => M,
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<M>>>;
 
   /**
@@ -570,7 +571,7 @@ export class SequenceBuilder<Ctx> {
    */
   pass<R, Key extends string>(
     name: string,
-    config: { result: R; resultPath: `$.${Key}` }
+    config: { result: R; resultPath: `$.${Key}` },
   ): SequenceBuilder<Ctx & Record<Key, R>>;
 
   pass(
@@ -578,7 +579,7 @@ export class SequenceBuilder<Ctx> {
     mappingFnOrConfig:
       | ((ctx: Proxied<Ctx>) => Record<string, unknown>)
       | { result: unknown; resultPath: string },
-    options?: { resultPath?: null }
+    options?: { resultPath?: null },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     // Overload 2: literal Result
@@ -654,7 +655,7 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     ItemsPath extends string,
     S extends Record<string, unknown>,
-    ProcessorCtx
+    ProcessorCtx,
   >(
     name: Name,
     config: MapConfig<
@@ -664,22 +665,24 @@ export class SequenceBuilder<Ctx> {
       ProcessorCtx
     > & {
       itemsPath: ItemsPath;
-    }
+    },
   ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
 
   map<
     Name extends string,
     ItemType,
     S extends Record<string, unknown>,
-    ProcessorCtx
+    ProcessorCtx,
   >(
     name: Name,
-    config: MapConfig<Ctx, ItemType, S, ProcessorCtx>
+    config: MapConfig<Ctx, ItemType, S, ProcessorCtx>,
   ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
 
   map(
     name: string,
-    config: MapConfig<any, any, any, any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    config: MapConfig<any, any, any, any>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const outerProxy = createProxy<Ctx>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -743,7 +746,7 @@ export class SequenceBuilder<Ctx> {
    */
   customTask<Name extends string, O = Record<string, unknown>>(
     name: Name,
-    config: CustomTaskConfig<Ctx>
+    config: CustomTaskConfig<Ctx>,
   ): SequenceBuilder<Ctx & Record<Name, O>> {
     const proxy = createProxy<Ctx>();
     const rawParams = config.parameters(proxy);
@@ -796,7 +799,7 @@ export class SequenceBuilder<Ctx> {
    */
   choice(
     name: string,
-    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>
+    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
   ): SequenceBuilder<Ctx>;
 
   /**
@@ -816,12 +819,12 @@ export class SequenceBuilder<Ctx> {
    */
   choice<Adds>(
     name: string,
-    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>
+    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
   ): SequenceBuilder<Ctx & Adds>;
 
   choice(
     name: string,
-    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>
+    configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const proxy = createProxy<Ctx>();
@@ -865,7 +868,7 @@ export class SequenceBuilder<Ctx> {
    */
   fail(
     name: string,
-    config: { error?: string; cause?: string }
+    config: { error?: string; cause?: string },
   ): SequenceBuilder<Ctx> {
     const state: Record<string, unknown> = { Type: 'Fail' };
     if (config.error !== undefined) state['Error'] = config.error;
@@ -955,14 +958,14 @@ export class SequenceBuilder<Ctx> {
             for (const bName of Object.keys(branchMachine.States)) {
               if (states[bName]) {
                 throw new Error(
-                  `Duplicate state name "${bName}" in choice "${name}"`
+                  `Duplicate state name "${bName}" in choice "${name}"`,
                 );
               }
             }
             if (nextStateName) {
               rewireTerminals(
                 branchMachine.States as Record<string, Record<string, unknown>>,
-                nextStateName
+                nextStateName,
               );
             }
             Object.assign(states, branchMachine.States);
@@ -983,7 +986,7 @@ export class SequenceBuilder<Ctx> {
             for (const bName of Object.keys(defaultMachine.States)) {
               if (states[bName]) {
                 throw new Error(
-                  `Duplicate state name "${bName}" in choice "${name}" default branch`
+                  `Duplicate state name "${bName}" in choice "${name}" default branch`,
                 );
               }
             }
@@ -993,7 +996,7 @@ export class SequenceBuilder<Ctx> {
                   string,
                   Record<string, unknown>
                 >,
-                nextStateName
+                nextStateName,
               );
             }
             Object.assign(states, defaultMachine.States);
@@ -1035,7 +1038,7 @@ export class SequenceBuilder<Ctx> {
           for (const bName of Object.keys(handlerMachine.States)) {
             if (states[bName]) {
               throw new Error(
-                `Duplicate state name "${bName}" in catch handler for "${name}"`
+                `Duplicate state name "${bName}" in catch handler for "${name}"`,
               );
             }
           }
@@ -1072,7 +1075,7 @@ export class SequenceBuilder<Ctx> {
  */
 function rewireTerminals(
   states: Record<string, Record<string, unknown>>,
-  nextStateName: string
+  nextStateName: string,
 ): void {
   for (const state of Object.values(states)) {
     if (
@@ -1111,7 +1114,7 @@ function rewireTerminals(
  * - Primitives → kept as-is
  */
 export function serializeParameters(
-  obj: Record<string, unknown>
+  obj: Record<string, unknown>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
@@ -1156,7 +1159,7 @@ function serializeItem(item: unknown): unknown {
  */
 function buildAslPayload(
   _inputSchema: AnyZodObject,
-  mappedPayload: Record<string, unknown>
+  mappedPayload: Record<string, unknown>,
 ): Record<string, unknown> {
   const aslPayload: Record<string, unknown> = {};
 
@@ -1180,7 +1183,7 @@ function buildAslPayload(
  * Produces `{ "key.$": "$.Payload.key" }` for every key in the schema.
  */
 function buildResultSelector(
-  outputSchema: AnyZodObject
+  outputSchema: AnyZodObject,
 ): Record<string, string> {
   const selector: Record<string, string> = {};
   for (const key of Object.keys(outputSchema.shape)) {

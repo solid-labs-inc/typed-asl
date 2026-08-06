@@ -1,16 +1,79 @@
 {
-  "name": "@stellar/step",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "main": "./src/index.ts",
-  "exports": {
-    ".": "./src/index.ts"
+  "name": "typed-asl",
+  "version": "0.1.0",
+  "description": "Build Amazon States Language state machines in TypeScript, with compile-time proof that every task payload matches its Lambda's Zod schema and every JSONPath ref resolves.",
+  "keywords": [
+    "aws",
+    "step-functions",
+    "sfn",
+    "asl",
+    "amazon-states-language",
+    "state-machine",
+    "zod",
+    "typescript",
+    "infrastructure-as-code"
+  ],
+  "license": "MIT",
+  "author": "Solid Labs GmbH",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solid-labs-inc/typed-asl.git"
   },
-  "nx": {
-    "sourceRoot": "./src",
-    "targets": {
-      "test": {}
-    }
+  "homepage": "https://github.com/solid-labs-inc/typed-asl#readme",
+  "bugs": {
+    "url": "https://github.com/solid-labs-inc/typed-asl/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.0.0",
+    "eslint": "^10.8.0",
+    "prettier": "^3.4.2",
+    "tsup": "^8.3.5",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^3.0.0",
+    "zod": "^4.0.17"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

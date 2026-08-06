@@ -63,7 +63,7 @@ describe('Chapter 0: The Problem with Raw ASL', () => {
     // The ASL is valid JSON — but the compiler tells us nothing about whether
     // '$.runMediaInfo.mediaInfo.width' actually exists or is a number.
     expect(rawAsl.States.CreateVideo.Parameters.Payload['width.$']).toBe(
-      '$.runMediaInfo.mediaInfo.width'
+      '$.runMediaInfo.mediaInfo.width',
     );
   });
 

@@ -1,14 +1,20 @@
-# Step Functions Builder
+# typed-asl
 
-Generates ASL JSON from TypeScript, with compile-time proof that payload mappings match the Lambdas' Zod schemas and that every JSONPath ref resolves to a real upstream output of the right type.
+Generates Amazon States Language JSON from TypeScript, with compile-time proof that payload mappings match the Lambdas' Zod schemas and that every JSONPath ref resolves to a real upstream output of the right type.
+
+```bash
+npm install typed-asl zod
+```
 
 ## Why
 
-Hand-written ASL (`.json.tftpl`) and Lambda handler schemas are disconnected: misaligned payloads, dangling JSONPath references and type mismatches surface only at runtime, mid-execution. If a machine built here typechecks, its payloads are correct.
+Hand-written ASL and Lambda handler schemas are disconnected: misaligned payloads, dangling JSONPath references and type mismatches surface only at runtime, mid-execution. If a machine built here typechecks, its payloads are correct.
 
 Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, and out-of-range parallel branch indices.
 
 ```ts
+import { SequenceBuilder } from 'typed-asl';
+
 const machine = new SequenceBuilder<Input>()
   .task(
     'runMediaInfo',
@@ -17,7 +23,7 @@ const machine = new SequenceBuilder<Input>()
       outputSchema: RunMediainfoStepOutput,
       functionArn: LAMBDA_ARN,
     },
-    (ctx) => ({ bucket: ctx.bucket, key: ctx.key })
+    (ctx) => ({ bucket: ctx.bucket, key: ctx.key }),
   )
   .task(
     'createVideo',
@@ -26,12 +32,18 @@ const machine = new SequenceBuilder<Input>()
       outputSchema: CreateVideoOutput,
       functionArn: LAMBDA_ARN,
     },
-    (ctx) => ({ mediaInfo: ctx.runMediaInfo.mediaInfo })
+    (ctx) => ({ mediaInfo: ctx.runMediaInfo.mediaInfo }),
   )
   .build();
 ```
 
 Each method appends a state and returns the builder widened with that state's output, so `ctx` at every step is a `Proxied<Ctx>` whose property accesses record JSONPath segments (`$.runMediaInfo.mediaInfo`) while carrying the schema's type.
+
+`build()` returns a plain ASL object. Write it to a file, feed it to Terraform or CDK, or hand it to `CreateStateMachine` — the library has no opinion about deployment.
+
+## Learn it
+
+[`tutorial/`](tutorial) is the documentation: eleven numbered files that build the library's ideas from scratch, each one a runnable test. Start at [`00-the-problem.test.ts`](tutorial/00-the-problem.test.ts) and read in order. Because they are tests, they cannot drift from the implementation.
 
 ## Type machinery worth knowing
 
@@ -42,12 +54,37 @@ Each method appends a state and returns the builder widened with that state's ou
 **`pipe(fn)` keeps reusable task groups in a flat chain.** Declare the function generic over `Ctx extends { … }` and the constraint becomes its documented requirement on upstream outputs:
 
 ```ts
-const addCreateAtlas = <Ctx extends { extractFrames: { frameStorageRefs: StorageRef[] } }>(
+const addCreateAtlas = <
+  Ctx extends { extractFrames: { frameStorageRefs: StorageRef[] } },
+>(
   b: SequenceBuilder<Ctx>
-) => b.task('createAtlas', createAtlasConfig, (ctx) => ({
-  frameStorageRefs: ctx.extractFrames.frameStorageRefs,
-  outputFilename: 'atlas.webp',
-}));
+) =>
+  b.task('createAtlas', createAtlasConfig, (ctx) => ({
+    frameStorageRefs: ctx.extractFrames.frameStorageRefs,
+    outputFilename: 'atlas.webp',
+  }));
 
-new SequenceBuilder<Input>().task('extractFrames', …).pipe(addCreateAtlas).task('finalize', …).build();
+new SequenceBuilder<Input>()
+  .task('extractFrames', …)
+  .pipe(addCreateAtlas)
+  .task('finalize', …)
+  .build();
 ```
+
+## Scope
+
+Supported states: `Task` (Lambda, plus a `customTask` escape hatch for any service integration ARN), `Parallel`, `Map`, `Choice`, `Pass`, `Fail`, `Succeed` — with `Retry`, `Catch`, `ResultSelector` and intrinsic functions.
+
+Not yet supported, and worth knowing before you adopt:
+
+- **JSONPath mode only.** The newer JSONata query language and `Assign`/variables are not implemented; the ref machinery assumes JSONPath.
+- **No Distributed Map** (`ItemReader`/`ResultWriter`/`ItemBatcher`).
+- **No `Wait` state**, and no state-level `TimeoutSeconds`/`HeartbeatSeconds`.
+- **Zod only.** Output schemas drive `ResultSelector` generation, so other validators aren't pluggable today.
+- **`build()` does not validate against the ASL spec.** It guarantees your mappings and refs, not that AWS will accept every machine you can express.
+
+This came out of a production monorepo, where it builds real state machines — but it has been shaped by a small number of them. Expect rough edges on shapes we haven't hit. Issues and PRs welcome.
+
+## License
+
+MIT

@@ -50,7 +50,7 @@ function resolveVariable(v: ChoiceVariable): string {
  * Compound conditions produce `{ And/Or/Not: [...] }`.
  */
 export function serializeCondition(
-  condition: ChoiceCondition
+  condition: ChoiceCondition,
 ): Record<string, unknown> {
   // Compound: And
   if ('and' in condition) {
