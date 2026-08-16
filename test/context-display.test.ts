@@ -12,9 +12,68 @@
  * `checker.typeToString` on the fixture's builder type arguments — the
  * same string the editor shows.
  */
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import ts from 'typescript';
+
+// ── Compiler API ────────────────────────────────────────────────────
+//
+// Loaded through `createRequire` against a hand-written interface rather
+// than `import ts from 'typescript'`, in the same spirit as
+// `asl-validator.d.ts`. The reason is the `typecheck-matrix` job: it
+// runs `tsc --noEmit` against `typescript@latest`, which is now the 7.x
+// native port, and that package's types resolve to a version shim with
+// no `createProgram` on it. Typing the slice we drive keeps this file
+// compiling on both compiler generations, and the matrix keeps testing
+// what it is for — the library's types, not this harness. Only `tsc`
+// runs there; the tests themselves always execute against the pinned
+// `typescript` devDependency, which is a real 5.x compiler.
+
+type Node = object;
+type SourceFile = object;
+type TsType = object;
+type Diagnostic = object;
+
+interface TsSymbol {
+  readonly valueDeclaration?: Node;
+  getName(): string;
+}
+
+interface TypeChecker {
+  getSymbolAtLocation(node: Node): TsSymbol | undefined;
+  getExportsOfModule(symbol: TsSymbol): TsSymbol[];
+  getTypeOfSymbolAtLocation(symbol: TsSymbol, node: Node): TsType;
+  getTypeArguments(type: TsType): readonly TsType[];
+  typeToString(type: TsType, enclosing?: Node, flags?: number): string;
+}
+
+interface Program {
+  getTypeChecker(): TypeChecker;
+  getSourceFile(fileName: string): SourceFile | undefined;
+  getSemanticDiagnostics(file?: SourceFile): readonly Diagnostic[];
+  getSyntacticDiagnostics(file?: SourceFile): readonly Diagnostic[];
+}
+
+interface CompilerApi {
+  ScriptTarget: { ES2022: number };
+  ModuleKind: { NodeNext: number };
+  ModuleResolutionKind: { NodeNext: number };
+  TypeFormatFlags: { NoTruncation: number };
+  createProgram(
+    rootNames: readonly string[],
+    options: Record<string, unknown>,
+  ): Program;
+  formatDiagnostics(
+    diagnostics: readonly Diagnostic[],
+    host: {
+      getCanonicalFileName(fileName: string): string;
+      getCurrentDirectory(): string;
+      getNewLine(): string;
+    },
+  ): string;
+}
+
+const ts = createRequire(import.meta.url)('typescript') as CompilerApi;
 
 const FIXTURE = fileURLToPath(
   new URL('./fixtures/context-display.ts', import.meta.url),
@@ -60,7 +119,7 @@ function renderFixtureContexts(): Map<string, string> {
     const declaration = symbol.valueDeclaration;
     if (!declaration) continue;
     const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
-    const [ctx] = checker.getTypeArguments(type as ts.TypeReference);
+    const [ctx] = checker.getTypeArguments(type);
     if (!ctx) continue;
     rendered.set(
       symbol.getName(),
