@@ -7,6 +7,13 @@ not done, so decisions don't get re-litigated.
 
 ## Done
 
+- [x] **Release 0.3.0** (2026-08-16) — the full M2 milestone (Wait,
+      timeouts, `*Path` choice operators, parallel branch factories, the
+      complete JSONPath intrinsic set, the optional-output decision as a
+      compile-time gate), a type-tightening pass (honest `customTask`
+      context, typed `map` items selector, checked choice variables,
+      error-name completion), and two code-review rounds (20 verified
+      findings fixed before merge).
 - [x] **Release 0.2.0** (2026-08-16) via the tag-triggered workflow;
       trusted publishing (OIDC + provenance) proven working. Note for the
       next package: npm needs a Trusted Publisher entry per package
