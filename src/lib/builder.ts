@@ -187,13 +187,6 @@ export interface CustomTaskConfig<Ctx> {
 const CATCH_HANDLERS: unique symbol = Symbol('catchHandlers');
 
 /**
- * Sentinel value used when a Choice state's empty branch or default has no
- * convergence target yet (e.g. the choice is the last state in a sub-builder).
- * The parent's `rewireTerminals` call replaces it with the real next state.
- */
-const PENDING_NEXT = '__PENDING_NEXT__';
-
-/**
  * Configuration for a Catch block on a Parallel or Task state.
  *
  * @typeParam Ctx - The current builder context.
@@ -940,8 +933,9 @@ export class SequenceBuilder<Ctx> {
         const choices: Record<string, unknown>[] = [];
 
         // When the choice is the last state in the sequence, empty branches
-        // and the implicit default need an auto-generated Pass end state
-        // instead of PENDING_NEXT (which would never be resolved).
+        // and the implicit default converge on an auto-generated Pass end
+        // state. (If a parent builder later appends states after this choice,
+        // rewireTerminals redirects that Pass to the real next state.)
         let endPassStateName: string | undefined;
         const getOrCreateEndPass = (): string => {
           if (!endPassStateName) {
@@ -1091,21 +1085,6 @@ function rewireTerminals(
     ) {
       delete state['End'];
       state['Next'] = nextStateName;
-    }
-
-    // Resolve pending convergence targets in Choice states
-    if (state['Type'] === 'Choice') {
-      if (state['Default'] === PENDING_NEXT) {
-        state['Default'] = nextStateName;
-      }
-      const choices = state['Choices'] as Record<string, unknown>[] | undefined;
-      if (choices) {
-        for (const choice of choices) {
-          if (choice['Next'] === PENDING_NEXT) {
-            choice['Next'] = nextStateName;
-          }
-        }
-      }
     }
   }
 }
