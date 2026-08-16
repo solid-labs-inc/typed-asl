@@ -53,6 +53,22 @@ land silently.
 
 Each item is independently shippable; 0.3.0 cuts when they're all in.
 
+**Status: implemented** (August 2026). Notes:
+
+- `wait()` gained a callback form (`(ctx) => ({ secondsPath: ctx.delay })`)
+  — the config-only design had no way to reach a typed context ref
+  mid-chain.
+- Item 6 (out-of-range parallel indices) fixed via the `Proxied` reshape:
+  the tuple branch is a keyed object (`Extract<keyof T, `${number}`>`)
+  instead of a mapped tuple, which removes the array number-index
+  signature that let `tup[2]` through. Side effect, deliberate: proxied
+  refs no longer expose array methods.
+- Item 7 decided as (b): optional output fields are a compile error
+  without an explicit `resultSelector` (plus a build-time throw), shipped
+  as the 0.3.0 breaking change.
+- `BranchOutputTuple`'s constraint loosened to `readonly unknown[]` —
+  `readonly BranchInput<X>[]` trips function-parameter contravariance.
+
 1. **`Wait` state** (S). `wait(name, { seconds | timestamp |
 secondsPath: Ref<number> | timestampPath: Ref<string> })` — context type
    unchanged.

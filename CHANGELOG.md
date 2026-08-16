@@ -10,6 +10,40 @@ and this project adheres to
 
 ### Added
 
+- `Wait` state: `wait(name, { seconds | timestamp | secondsPath |
+timestampPath })`, with a callback form for typed refs to the context
+  (`wait(name, (ctx) => ({ secondsPath: ctx.delay }))`).
+- `TimeoutSeconds`/`HeartbeatSeconds` on `task` and `customTask`, plus
+  `timeoutSecondsPath`/`heartbeatSecondsPath` taking `Ref<number>`. The
+  static and Path forms of an option are mutually exclusive (build-time
+  error).
+- All 16 `*Path` choice operators. The operand is a typed ref and the
+  variable must agree with it — `numericLessThanPath` wants `Ref<number>`
+  on both sides.
+- `parallel` branches accept factory callbacks
+  (`(b) => b.task(...)`) alongside prebuilt builders, like `choice`
+  branches — the fresh builder is seeded with the current context, and
+  per-index tuple typing is preserved (`BranchInput`, widened
+  `BranchOutputTuple`).
+- The rest of the JSONPath intrinsic set: `statesArrayGetItem`,
+  `statesArrayContains`, `statesArrayRange`, `statesArrayUnique`,
+  `statesArrayPartition`, `statesJsonMerge` (shallow, typed as
+  `Omit<A, keyof B> & B`), `statesMathRandom`, `statesStringSplit`,
+  `statesBase64Encode`/`statesBase64Decode`, `statesHash`.
+
+### Changed
+
+- **Breaking:** an output schema with `.optional()` fields now requires
+  an explicit `resultSelector` — enforced at compile time (the config
+  stops typechecking, with the requirement spelled out in the error) and
+  at build time. The auto-generated selector references every schema key
+  and ASL errors at runtime when one is absent, so this was a
+  latent-failure trap.
+- **Breaking (type-level):** out-of-range tuple indices on parallel
+  results (`ctx.par[2]` on a two-branch parallel) are now compile
+  errors, and proxied refs no longer expose array methods (`ctx.arr.map`
+  would have recorded the JSONPath `$.arr.map`).
+
 - Every fixture machine in the test suite is now validated against the ASL
   spec with `asl-validator` — a `build()` result that AWS would reject
   fails CI.
