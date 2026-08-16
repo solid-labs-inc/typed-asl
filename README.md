@@ -1,6 +1,7 @@
 # typed-asl
 
 [![CI](https://img.shields.io/github/actions/workflow/status/solid-labs-inc/typed-asl/ci.yml?branch=main&label=CI)](https://github.com/solid-labs-inc/typed-asl/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/codecov/c/github/solid-labs-inc/typed-asl?label=coverage)](https://codecov.io/gh/solid-labs-inc/typed-asl)
 [![npm](https://img.shields.io/npm/v/typed-asl)](https://www.npmjs.com/package/typed-asl)
 [![npm provenance](https://img.shields.io/badge/npm%20provenance-signed-brightgreen)](https://www.npmjs.com/package/typed-asl#provenance)
 [![runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)](package.json)
@@ -84,7 +85,7 @@ Each claim above is pinned by something that fails the build when it stops being
 - **Every `build()` in the suite is validated against the ASL spec** with `asl-validator`, through a setup hook rather than per-call-site opt-in — so a fixture AWS would reject cannot pass CI.
 - **Negative type tests** ([`src/lib/type-guarantees.test.ts`](src/lib/type-guarantees.test.ts)) pin the compile-time contract as `@ts-expect-error` cases. `tsc` checks those in both directions, so they still fail when inference quietly degrades to `any` — which no passing runtime test would catch.
 - **Three compilers**: the pinned `~5.7`, the newest 5.x, and `typescript@latest`. Type-level behavior is this library's API surface, so a compiler upgrade can be a breaking change.
-- **Coverage is a ratchet** — the floor sits at 95% statements / 91% branches, and CI fails if it drops. Thresholds only move up, with one documented exception: re-baselining when a coverage-tool major bump shifts attribution (vitest 3 → 4 measured about a point lower on identical code).
+- **Coverage is a ratchet** — the floor sits at 95% statements / 91% branches, and CI fails if it drops. Thresholds only move up, with one documented exception: re-baselining when a coverage-tool major bump shifts attribution (vitest 3 → 4 measured about a point lower on identical code). The badge reads lower than those figures because Codecov counts a partially-covered line as a miss where vitest counts it as hit — the same report is 91% there and 96% lines here.
 - **Releases are signed.** Publishing runs from the tagged workflow through npm trusted publishing (OIDC, no long-lived token), so the tarball on npm carries provenance back to this repo and commit.
 
 ## Scope
