@@ -60,10 +60,23 @@ function argToString(arg: Ref<unknown> | IntrinsicExpr): string {
 }
 
 /**
+ * Escape single quotes in an intrinsic function's string argument, since the
+ * template is embedded in single quotes. `{}` is left untouched (it's the
+ * placeholder syntax), and backslashes pass through verbatim so user-written
+ * `\\{` literal-brace escapes keep working.
+ */
+function escapeTemplate(template: string): string {
+  return template.replace(/'/g, "\\'");
+}
+
+/**
  * Step Functions `States.Format()` intrinsic function.
  *
  * Produces a string by interpolating `{}` placeholders in the template
  * with the provided arguments (refs or other intrinsics).
+ *
+ * Single quotes in the template are escaped automatically. To include a
+ * literal `{` or `}`, escape it yourself as `\\{` / `\\}` per the ASL spec.
  *
  * @example
  * ```ts
@@ -76,7 +89,7 @@ export function statesFormat(
   ...args: (Ref<unknown> | IntrinsicExpr)[]
 ): IntrinsicExpr<string> {
   const argStrings = args.map(argToString);
-  const allArgs = [`'${template}'`, ...argStrings].join(', ');
+  const allArgs = [`'${escapeTemplate(template)}'`, ...argStrings].join(', ');
   return createIntrinsic<string>(`States.Format(${allArgs})`);
 }
 

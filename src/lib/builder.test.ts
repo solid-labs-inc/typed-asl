@@ -3271,3 +3271,121 @@ describe('parallel with catch', () => {
     expect(finalize['End']).toBe(true);
   });
 });
+
+// ── Regression: duplicate state names ───────────────────────────────
+
+describe('duplicate state names', () => {
+  const taskConfig = {
+    inputSchema: z.object({ bucket: z.string() }),
+    outputSchema: z.object({ result: z.string() }),
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('should throw when two states share a name', () => {
+    const builder = new SequenceBuilder<{ bucket: string }>()
+      .task('process', taskConfig, (ctx) => ({ bucket: ctx.bucket }))
+      .task('process', taskConfig, (ctx) => ({ bucket: ctx.bucket }));
+
+    expect(() => builder.build()).toThrow('Duplicate state name "Process"');
+  });
+
+  it('should throw when names collide after capitalization', () => {
+    // States are keyed by capitalized name, so 'process' and 'Process'
+    // would map to the same key and silently overwrite each other.
+    const builder = new SequenceBuilder<{ bucket: string }>()
+      .task('process', taskConfig, (ctx) => ({ bucket: ctx.bucket }))
+      .task('Process', taskConfig, (ctx) => ({ bucket: ctx.bucket }));
+
+    expect(() => builder.build()).toThrow('Duplicate state name "Process"');
+  });
+
+  it('should throw when a top-level state collides with a choice branch state', () => {
+    const builder = new SequenceBuilder<{ flag: boolean }>()
+      .choice('route', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.flag, booleanEquals: true },
+            then: (b) => b.succeed('done'),
+          },
+        ],
+      }))
+      .succeed('done');
+
+    expect(() => builder.build()).toThrow('Duplicate state name "Done"');
+  });
+});
+
+// ── Regression: builders are immutable ──────────────────────────────
+
+describe('builder immutability', () => {
+  const taskConfig = {
+    inputSchema: z.object({ bucket: z.string() }),
+    outputSchema: z.object({ result: z.string() }),
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('appending a state does not mutate the original builder', () => {
+    const base = new SequenceBuilder<{ bucket: string }>().task(
+      'first',
+      taskConfig,
+      (ctx) => ({ bucket: ctx.bucket }),
+    );
+
+    base.task('second', taskConfig, (ctx) => ({ bucket: ctx.bucket }));
+
+    expect(Object.keys(base.build().States)).toEqual(['First']);
+  });
+
+  it('a shared prefix can fork into independent sequences', () => {
+    const base = new SequenceBuilder<{ bucket: string }>().task(
+      'first',
+      taskConfig,
+      (ctx) => ({ bucket: ctx.bucket }),
+    );
+
+    const left = base.task('left', taskConfig, (ctx) => ({
+      bucket: ctx.bucket,
+    }));
+    const right = base.task('right', taskConfig, (ctx) => ({
+      bucket: ctx.bucket,
+    }));
+
+    expect(Object.keys(left.build().States)).toEqual(['First', 'Left']);
+    expect(Object.keys(right.build().States)).toEqual(['First', 'Right']);
+  });
+
+  it('every builder method returns a new instance', () => {
+    const b0 = new SequenceBuilder<{ bucket: string; flag: boolean }>();
+    const b1 = b0.task('load', taskConfig, (ctx) => ({ bucket: ctx.bucket }));
+    const b2 = b1.pass('reshape', (ctx) => ({ b: ctx.bucket }));
+    const b3 = b2.pass('setFlag', { result: true, resultPath: '$.marker' });
+    const b4 = b3.choice('route', (ctx) => ({
+      choices: [
+        {
+          when: { variable: ctx.flag, booleanEquals: true },
+          then: (b) => b,
+        },
+      ],
+    }));
+    const b5 = b4.succeed('done');
+
+    const builders: unknown[] = [b0, b1, b2, b3, b4, b5];
+    expect(new Set(builders).size).toBe(builders.length);
+  });
+});
+
+// ── Regression: States.Format template escaping ─────────────────────
+
+describe('statesFormat template escaping', () => {
+  it('escapes single quotes in the template', () => {
+    const ctx = createProxy<{ name: string }>();
+    const expr = statesFormat("it's {}", ctx.name);
+    expect(getExpression(expr)).toBe("States.Format('it\\'s {}', $.name)");
+  });
+
+  it('leaves placeholder braces untouched', () => {
+    const ctx = createProxy<{ a: string; b: string }>();
+    const expr = statesFormat('{}/{}', ctx.a, ctx.b);
+    expect(getExpression(expr)).toBe("States.Format('{}/{}', $.a, $.b)");
+  });
+});
