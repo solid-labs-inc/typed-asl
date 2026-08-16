@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-16
+
 ### Added
 
 - `Wait` state: `wait(name, { seconds | timestamp | secondsPath |
@@ -165,6 +167,7 @@ Initial extraction from the Stellar monorepo. Never published to npm.
 - Intrinsics: `statesFormat`, `statesJsonToString`, `statesMathAdd`.
 - Runnable tutorial (`tutorial/00`–`10`) doubling as the documentation.
 
-[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/solid-labs-inc/typed-asl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/solid-labs-inc/typed-asl/releases/tag/v0.2.0
 [0.1.0]: https://github.com/solid-labs-inc/typed-asl/commit/2649df6

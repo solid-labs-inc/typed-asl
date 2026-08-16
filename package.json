@@ -1,6 +1,6 @@
 {
   "name": "typed-asl",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Build Amazon States Language state machines in TypeScript, with compile-time proof that every task payload matches its Lambda's Zod schema and every JSONPath ref resolves.",
   "keywords": [
     "aws",
