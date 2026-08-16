@@ -18,9 +18,13 @@ import { describe, it, expect, expectTypeOf } from 'vitest';
 
 import {
   createProxy,
+  statesArray,
+  statesArrayLength,
   statesFormat,
   statesJsonToString,
   statesMathAdd,
+  statesStringToJson,
+  statesUuid,
   getExpression,
   isIntrinsic,
   serializeParameters,
@@ -100,6 +104,44 @@ describe('Chapter 6: Intrinsic Functions', () => {
     expect(getExpression(outer)).toBe(
       "States.Format('payload: {}', States.JsonToString($.data))",
     );
+  });
+
+  // ── States.Array & friends ───────────────────────────────────────────
+
+  it('statesArray() builds an array from refs and literals', () => {
+    // This is the only way to get JSONPath values into an array — a bare
+    // ref as a plain array element is rejected by serialization, since ASL
+    // has no path substitution inside arrays (see chapter 5).
+    type Ctx = { a: string; b: string };
+    const ctx = createProxy<Ctx>();
+
+    const expr = statesArray(ctx.a, 'literal', ctx.b);
+    expect(getExpression(expr)).toBe("States.Array($.a, 'literal', $.b)");
+    expectTypeOf(expr).toExtend<IntrinsicExpr<string[]>>();
+  });
+
+  it('statesArrayLength() counts array elements', () => {
+    type Ctx = { scenes: { id: string }[] };
+    const ctx = createProxy<Ctx>();
+
+    const expr = statesArrayLength(ctx.scenes);
+    expect(getExpression(expr)).toBe('States.ArrayLength($.scenes)');
+    expectTypeOf(expr).toExtend<IntrinsicExpr<number>>();
+  });
+
+  it('statesStringToJson() parses a JSON string, typed via parameter', () => {
+    type Ctx = { rawJson: string };
+    const ctx = createProxy<Ctx>();
+
+    const expr = statesStringToJson<{ id: string }>(ctx.rawJson);
+    expect(getExpression(expr)).toBe('States.StringToJson($.rawJson)');
+    expectTypeOf(expr).toExtend<IntrinsicExpr<{ id: string }>>();
+  });
+
+  it('statesUuid() generates a UUID at execution time', () => {
+    const expr = statesUuid();
+    expect(getExpression(expr)).toBe('States.UUID()');
+    expectTypeOf(expr).toExtend<IntrinsicExpr<string>>();
   });
 
   // ── Intrinsics in serialization ──────────────────────────────────────

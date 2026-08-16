@@ -310,11 +310,11 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
   it('build() throws on duplicate state names', () => {
     // ASL keys states by name, so a duplicate would silently overwrite
     // the earlier state. build() catches this — including names that
-    // collide only after capitalization ('run' and 'Run' both become 'Run').
+    // collide only after capitalization ('mark' and 'Mark' both become 'Mark').
     const builder = new SequenceBuilder<{ bucket: string; key: string }>()
-      .succeed('done')
-      .succeed('Done');
+      .pass('mark', (ctx) => ({ b: ctx.bucket }))
+      .pass('Mark', (ctx) => ({ k: ctx.key }));
 
-    expect(() => builder.build()).toThrow('Duplicate state name "Done"');
+    expect(() => builder.build()).toThrow('Duplicate state name "Mark"');
   });
 });

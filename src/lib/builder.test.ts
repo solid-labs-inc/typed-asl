@@ -10,6 +10,7 @@ import {
 import { serializeCondition } from './choice.js';
 import {
   getExpression,
+  statesArray,
   statesFormat,
   statesJsonToString,
   statesMathAdd,
@@ -3387,5 +3388,126 @@ describe('statesFormat template escaping', () => {
     const ctx = createProxy<{ a: string; b: string }>();
     const expr = statesFormat('{}/{}', ctx.a, ctx.b);
     expect(getExpression(expr)).toBe("States.Format('{}/{}', $.a, $.b)");
+  });
+});
+
+// ── Regression: refs inside arrays ──────────────────────────────────
+
+describe('refs as array elements', () => {
+  it('should throw — ASL cannot substitute paths inside arrays', () => {
+    // Serialization happens at pass() time via serializeParameters
+    expect(() =>
+      new SequenceBuilder<{ a: string; b: string }>().pass(
+        'combine',
+        (ctx) => ({
+          arr: [ctx.a, ctx.b],
+        }),
+      ),
+    ).toThrow('statesArray');
+  });
+
+  it('objects containing refs inside arrays still serialize', () => {
+    const result = new SequenceBuilder<{ id: string }>()
+      .pass('env', (ctx) => ({
+        env: [{ Name: 'ID', Value: ctx.id }],
+      }))
+      .build();
+    const params = (result.States['Env'] as Record<string, any>).Parameters;
+    expect(params.env).toEqual([{ Name: 'ID', 'Value.$': '$.id' }]);
+  });
+
+  it('statesArray() is the supported way to build an array of refs', () => {
+    const result = new SequenceBuilder<{ a: string; b: string }>()
+      .pass('combine', (ctx) => ({
+        arr: statesArray(ctx.a, 'literal', ctx.b),
+      }))
+      .build();
+    const params = (result.States['Combine'] as Record<string, any>).Parameters;
+    expect(params['arr.$']).toBe("States.Array($.a, 'literal', $.b)");
+  });
+});
+
+// ── Regression: nested refs in task payloads ────────────────────────
+
+describe('nested refs in task payloads', () => {
+  it('should serialize refs inside nested payload objects', () => {
+    const config = {
+      inputSchema: z.object({ nested: z.unknown() }),
+      outputSchema: z.object({ r: z.string() }),
+      functionArn: LAMBDA_ARN,
+    };
+    const result = new SequenceBuilder<{ a: string }>()
+      .task('t', config, (ctx) => ({ nested: { deep: ctx.a, lit: 42 } }))
+      .build();
+
+    const payload = (result.States['T'] as Record<string, any>).Parameters
+      .Payload;
+    expect(payload.nested).toEqual({ 'deep.$': '$.a', lit: 42 });
+  });
+});
+
+// ── Regression: terminal states must be last ────────────────────────
+
+describe('terminal state placement', () => {
+  it('should throw when states follow a Succeed', () => {
+    const builder = new SequenceBuilder<{ a: string }>()
+      .succeed('early')
+      .pass('after', (ctx) => ({ x: ctx.a }));
+
+    expect(() => builder.build()).toThrow(
+      'Terminal state "Early" must be the last state',
+    );
+  });
+
+  it('should throw when states follow a Fail', () => {
+    const builder = new SequenceBuilder<{ a: string }>()
+      .fail('boom', { error: 'E' })
+      .pass('after', (ctx) => ({ x: ctx.a }));
+
+    expect(() => builder.build()).toThrow(
+      'Terminal state "Boom" must be the last state',
+    );
+  });
+
+  it('a Fail as the last state of a choice branch is fine', () => {
+    const result = new SequenceBuilder<{ flag: boolean }>()
+      .choice('route', (ctx) => ({
+        choices: [
+          {
+            when: { variable: ctx.flag, booleanEquals: true },
+            then: (b) => b.fail('boom', { error: 'E' }),
+          },
+        ],
+      }))
+      .pass('after', () => ({ ok: true }))
+      .build();
+
+    expect((result.States['Boom'] as Record<string, any>).Type).toBe('Fail');
+  });
+});
+
+// ── Regression: state names must be identifiers ─────────────────────
+
+describe('state name validation', () => {
+  it('should throw on names that would break the ResultPath', () => {
+    expect(() =>
+      new SequenceBuilder<{ a: string }>().pass('my step', (ctx) => ({
+        x: ctx.a,
+      })),
+    ).toThrow('Invalid state name "my step"');
+
+    expect(() => new SequenceBuilder<{ a: string }>().succeed('done!')).toThrow(
+      'Invalid state name "done!"',
+    );
+
+    expect(() => new SequenceBuilder<{ a: string }>().succeed('1st')).toThrow(
+      'Invalid state name "1st"',
+    );
+  });
+
+  it('should accept identifier names', () => {
+    expect(() =>
+      new SequenceBuilder<{ a: string }>().succeed('_ok_Name2'),
+    ).not.toThrow();
   });
 });
