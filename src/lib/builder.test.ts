@@ -3511,3 +3511,241 @@ describe('state name validation', () => {
     ).not.toThrow();
   });
 });
+
+// ── Catch on Task, customTask, and Map ──────────────────────────────
+
+describe('task with catch', () => {
+  const taskConfig = {
+    inputSchema: z.object({ bucket: z.string() }),
+    outputSchema: z.object({ result: z.string() }),
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('should produce a Catch block on the Task state', () => {
+    const result = new SequenceBuilder<{ bucket: string }>()
+      .task(
+        'process',
+        {
+          ...taskConfig,
+          retry: DEFAULT_RETRY,
+          catch: [
+            {
+              errorEquals: ['States.TaskFailed'],
+              resultPath: '$.error',
+              handler: (b) =>
+                b.fail('processFailed', { error: 'ProcessingFailed' }),
+            },
+          ],
+        },
+        (ctx) => ({ bucket: ctx.bucket }),
+      )
+      .build();
+
+    const task = result.States['Process'] as Record<string, unknown>;
+    expect(task['Type']).toBe('Task');
+    // Retry and Catch coexist: retries run first, then the catch fires
+    expect(task['Retry']).toEqual(DEFAULT_RETRY);
+
+    const catchBlock = task['Catch'] as Record<string, unknown>[];
+    expect(catchBlock).toHaveLength(1);
+    expect(catchBlock[0]['ErrorEquals']).toEqual(['States.TaskFailed']);
+    expect(catchBlock[0]['ResultPath']).toBe('$.error');
+    expect(catchBlock[0]['Next']).toBe('ProcessFailed');
+
+    const failState = result.States['ProcessFailed'] as Record<string, unknown>;
+    expect(failState['Type']).toBe('Fail');
+  });
+
+  it('handler context includes the resultPath error key', () => {
+    new SequenceBuilder<{ bucket: string }>().task(
+      'process',
+      {
+        ...taskConfig,
+        catch: [
+          {
+            errorEquals: ['States.ALL'],
+            resultPath: '$.taskError',
+            handler: (b) => {
+              expectTypeOf(b).toExtend<
+                SequenceBuilder<
+                  { bucket: string } & Record<'taskError', unknown>
+                >
+              >();
+              return b.succeed('recovered');
+            },
+          },
+        ],
+      },
+      (ctx) => ({ bucket: ctx.bucket }),
+    );
+  });
+});
+
+describe('customTask with catch', () => {
+  it('should produce a Catch block on the custom Task state', () => {
+    const result = new SequenceBuilder<{ jobName: string }>()
+      .customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ JobName: ctx.jobName }),
+        resultPath: '$.job',
+        catch: [
+          {
+            errorEquals: ['States.ALL'],
+            handler: (b) => b.fail('submitFailed', { error: 'SubmitFailed' }),
+          },
+        ],
+      })
+      .build();
+
+    const task = result.States['Submit'] as Record<string, unknown>;
+    const catchBlock = task['Catch'] as Record<string, unknown>[];
+    expect(catchBlock[0]['Next']).toBe('SubmitFailed');
+    // No resultPath on the catch entry → no ResultPath key
+    expect(catchBlock[0]).not.toHaveProperty('ResultPath');
+    expect(result.States['SubmitFailed']).toBeDefined();
+  });
+});
+
+describe('map with retry and catch', () => {
+  it('should produce Retry and Catch on the Map state', () => {
+    type Ctx = { scenes: { id: string }[] };
+
+    const result = new SequenceBuilder<Ctx>()
+      .map('processScenes', {
+        itemsPath: '$.scenes',
+        retry: DEFAULT_RETRY,
+        catch: [
+          {
+            errorEquals: ['States.ALL'],
+            resultPath: '$.mapError',
+            handler: (b) => b.succeed('skipScenes'),
+          },
+        ],
+        itemSelector: (item: MapItemRef<{ id: string }>) => ({
+          scene: item.value,
+        }),
+        processor: (b) => b.pass('markScene', (ctx) => ({ id: ctx.scene.id })),
+      })
+      .build();
+
+    const map = result.States['ProcessScenes'] as Record<string, unknown>;
+    expect(map['Type']).toBe('Map');
+    expect(map['Retry']).toEqual(DEFAULT_RETRY);
+
+    const catchBlock = map['Catch'] as Record<string, unknown>[];
+    expect(catchBlock[0]['Next']).toBe('SkipScenes');
+    expect(catchBlock[0]['ResultPath']).toBe('$.mapError');
+    expect(result.States['SkipScenes']).toBeDefined();
+  });
+});
+
+describe('parallel with retry', () => {
+  it('should produce a Retry block on the Parallel state', () => {
+    type Ctx = { bucket: string };
+
+    const result = new SequenceBuilder<Ctx>()
+      .parallel(
+        'work',
+        [
+          new SequenceBuilder<Ctx>().pass('branchStep', (ctx) => ({
+            b: ctx.bucket,
+          })),
+        ],
+        { retry: DEFAULT_RETRY },
+      )
+      .build();
+
+    const parallel = result.States['Work'] as Record<string, unknown>;
+    expect(parallel['Retry']).toEqual(DEFAULT_RETRY);
+  });
+});
+
+// ── Expanded choice operators ───────────────────────────────────────
+
+describe('serializeCondition expanded operators', () => {
+  const ctx = createProxy<{
+    name: string;
+    count: number;
+    createdAt: string;
+    value: unknown;
+  }>();
+
+  it.each([
+    [{ variable: ctx.name, stringLessThan: 'b' }, { StringLessThan: 'b' }],
+    [
+      { variable: ctx.name, stringGreaterThan: 'b' },
+      { StringGreaterThan: 'b' },
+    ],
+    [
+      { variable: ctx.name, stringLessThanEquals: 'b' },
+      { StringLessThanEquals: 'b' },
+    ],
+    [
+      { variable: ctx.name, stringGreaterThanEquals: 'b' },
+      { StringGreaterThanEquals: 'b' },
+    ],
+    [
+      { variable: ctx.name, stringMatches: 'video_*.mp4' },
+      { StringMatches: 'video_*.mp4' },
+    ],
+    [
+      { variable: ctx.count, numericGreaterThanEquals: 3 },
+      { NumericGreaterThanEquals: 3 },
+    ],
+    [
+      { variable: ctx.count, numericLessThanEquals: 3 },
+      { NumericLessThanEquals: 3 },
+    ],
+    [
+      { variable: ctx.createdAt, timestampEquals: '2026-01-01T00:00:00Z' },
+      { TimestampEquals: '2026-01-01T00:00:00Z' },
+    ],
+    [
+      { variable: ctx.createdAt, timestampLessThan: '2026-01-01T00:00:00Z' },
+      { TimestampLessThan: '2026-01-01T00:00:00Z' },
+    ],
+    [
+      { variable: ctx.createdAt, timestampGreaterThan: '2026-01-01T00:00:00Z' },
+      { TimestampGreaterThan: '2026-01-01T00:00:00Z' },
+    ],
+    [
+      {
+        variable: ctx.createdAt,
+        timestampLessThanEquals: '2026-01-01T00:00:00Z',
+      },
+      { TimestampLessThanEquals: '2026-01-01T00:00:00Z' },
+    ],
+    [
+      {
+        variable: ctx.createdAt,
+        timestampGreaterThanEquals: '2026-01-01T00:00:00Z',
+      },
+      { TimestampGreaterThanEquals: '2026-01-01T00:00:00Z' },
+    ],
+    [{ variable: ctx.value, isNumeric: true }, { IsNumeric: true }],
+    [{ variable: ctx.value, isString: true }, { IsString: true }],
+    [{ variable: ctx.value, isBoolean: true }, { IsBoolean: true }],
+    [{ variable: ctx.value, isTimestamp: true }, { IsTimestamp: true }],
+  ] as const)('serializes %j', (condition, expected) => {
+    const serialized = serializeCondition(condition as any);
+    const { Variable, ...operator } = serialized;
+    expect(typeof Variable).toBe('string');
+    expect(operator).toEqual(expected);
+  });
+
+  it('expanded operators work inside compound conditions', () => {
+    const serialized = serializeCondition({
+      and: [
+        { variable: ctx.count, numericGreaterThanEquals: 1 },
+        { variable: ctx.name, stringMatches: '*.mp4' },
+      ],
+    });
+
+    expect(serialized).toEqual({
+      And: [
+        { Variable: '$.count', NumericGreaterThanEquals: 1 },
+        { Variable: '$.name', StringMatches: '*.mp4' },
+      ],
+    });
+  });
+});

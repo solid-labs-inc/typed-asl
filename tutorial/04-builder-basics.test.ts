@@ -256,6 +256,52 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
     expect(state.Retry[0].ErrorEquals).toContain('ThrottlingException');
   });
 
+  // ── Catch: error handlers ────────────────────────────────────────────
+
+  it('tasks can catch errors and divert to a handler chain', () => {
+    type Input = { bucket: string; key: string };
+
+    // `catch` diverts matching errors to a handler built from the current
+    // context. With a resultPath, the error object is stored at that key
+    // and the handler's context type includes it. Retries run first;
+    // the catch fires only once they are exhausted.
+    const asl = new SequenceBuilder<Input>()
+      .task(
+        'loadFile',
+        {
+          inputSchema: LoadFileInput,
+          outputSchema: LoadFileOutput,
+          functionArn: LAMBDA_ARN,
+          retry: THROTTLE_RETRY,
+          catch: [
+            {
+              errorEquals: ['States.TaskFailed'],
+              resultPath: '$.loadError',
+              handler: (b) => b.fail('loadFailed', { error: 'LoadFailed' }),
+            },
+          ],
+        },
+        (ctx) => ({
+          step: 'load-file' as const,
+          bucket: ctx.bucket,
+          key: ctx.key,
+        }),
+      )
+      .build();
+
+    const state = asl.States.LoadFile as Record<string, any>;
+    expect(state.Catch).toEqual([
+      {
+        ErrorEquals: ['States.TaskFailed'],
+        ResultPath: '$.loadError',
+        Next: 'LoadFailed',
+      },
+    ]);
+
+    // The handler's states live alongside the main sequence
+    expect((asl.States.LoadFailed as Record<string, any>).Type).toBe('Fail');
+  });
+
   // ── Builders are immutable ───────────────────────────────────────────
 
   it('appending never mutates — a shared prefix can fork safely', () => {
