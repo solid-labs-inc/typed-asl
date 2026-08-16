@@ -50,16 +50,16 @@ operator set).
 
 ## Release hygiene
 
-- [ ] **Release 0.2.0.** The immutability change and the new build-time
-      validations are behavior changes over 0.1.0 (anything they reject was
-      already silently-broken ASL, but semver says minor bump).
-- [ ] **Tag `v0.1.0` retroactively** — 0.1.0 was published by hand and the
-      tag-triggered trusted-publishing workflow has never run. Cutting 0.2.0
-      through it will prove the OIDC path works.
+- [x] **Release 0.2.0.** Shipped 2026-08-16 via the tag-triggered workflow;
+      trusted publishing (OIDC + provenance) is proven working. Note: the
+      npm side needs a Trusted Publisher entry per package
+      (org `solid-labs-inc`, repo `typed-asl`, workflow `release.yml`,
+      no environment) — its absence fails `npm publish` with a misleading 404.
+- ~~Tag `v0.1.0` retroactively~~ — dropped: pushing the tag would trigger
+  the release workflow, which fails against npm's duplicate-version check.
+  Not worth a workflow guard for one historical tag.
 - [ ] **CHANGELOG.md**, npm/CI badges in the README, dependabot (or renovate)
       for dev-dependency updates.
-- [ ] Delete the stray `typed-asl-0.1.0.tgz` from the working directory
-      (already gitignored).
 
 ## Punted with reasons
 
