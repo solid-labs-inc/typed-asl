@@ -23,9 +23,13 @@ and this project adheres to
 ### Fixed
 
 - A payload field not present in the input schema is now rejected — at
-  compile time via `NoExtraPayloadKeys`, and at runtime with a descriptive
-  error. Previously an extra (usually typo'd) field was silently sent to
-  the Lambda without ever being validated.
+  compile time via `ExactPayload`/`NoExtraPayloadKeys` (both exported),
+  and at runtime with a descriptive error. Previously an extra (usually
+  typo'd) field was silently sent to the Lambda without ever being
+  validated. The runtime check recurses into nested object fields and
+  object array elements, honors schemas that accept unknown keys
+  (`looseObject`, `.catchall(...)`), and skips `undefined` values, which
+  are never serialized.
 
 ## [0.2.0] - 2026-08-16
 

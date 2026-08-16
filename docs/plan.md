@@ -46,7 +46,8 @@ land silently.
   runtime throw in `buildAslPayload`), and out-of-range parallel indices
   like `ctx.par[2]` are still accepted (the `Ref<T> &` intersection in
   `Proxied` defeats tuple bounds checking — moved to M2 below).
-- TypeScript 7.0 is stable; the matrix runs `~5.7.2`, `^5`, and `latest`.
+- TypeScript 7.0 is stable; the matrix runs `^5` and `latest` (the pinned
+  `~5.7.2` is covered by the build job's own typecheck).
 
 ## M2 — Ergonomics and small states (0.3.0)
 

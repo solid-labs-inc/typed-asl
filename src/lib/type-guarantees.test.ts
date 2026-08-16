@@ -62,6 +62,32 @@ describe('type guarantees (negative cases)', () => {
     ).toThrow('Payload field "unexpected" is not in the input schema');
   });
 
+  it('rejects an extra field on the resultSelector overload too', () => {
+    // The exact-key check lives in the shared ExactPayload alias, but an
+    // overload could still regress independently — cover a second one.
+    // The bad payload makes the resultSelector overload fail, so overload
+    // resolution reports the error on the config argument, not the
+    // payload line — the directive sits there. If the API stops
+    // rejecting the extra field, the directive turns unused and tsc fails.
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'doThing',
+        {
+          ...config,
+          // @ts-expect-error — the bad payload disqualifies this overload,
+          // and TS pins the resulting error to this property
+          resultSelector: (output) => ({ id: output.resultId }),
+        },
+        (ctx) => ({
+          step: 'do-thing' as const,
+          bucket: ctx.bucket,
+          count: ctx.size,
+          unexpected: ctx.key,
+        }),
+      ),
+    ).toThrow('Payload field "unexpected" is not in the input schema');
+  });
+
   it('rejects a ref whose type does not match the field', () => {
     new SequenceBuilder<Ctx>().task('doThing', config, (ctx) => ({
       step: 'do-thing' as const,
