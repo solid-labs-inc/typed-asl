@@ -164,22 +164,32 @@ export function serializeCondition(
     return { Not: serializeCondition(condition.not) };
   }
 
-  // Simple condition — has `variable` plus one operator key
-  const result: Record<string, unknown> = {
-    Variable: resolveVariable(condition.variable),
-  };
-
-  for (const [camel, pascal] of Object.entries(CONDITION_KEY_MAP)) {
-    if (camel in condition) {
-      const operand = (condition as Record<string, unknown>)[camel];
-      // `*Path` operands are refs (or raw paths) — serialize the path,
-      // not the ref object.
-      result[pascal] = camel.endsWith('Path')
-        ? resolveVariable(operand as ChoiceVariable)
-        : operand;
-      break;
-    }
+  // Simple condition — has `variable` plus exactly one operator key.
+  // Union assignability can't reject an object carrying two operator
+  // keys (each key exists in some union arm), and a missing operator
+  // would serialize to a bare { Variable } that AWS rejects at deploy
+  // time — both are caught here instead of shipping wrong ASL.
+  const operatorKeys = Object.keys(CONDITION_KEY_MAP).filter(
+    (camel) => camel in condition,
+  );
+  if (operatorKeys.length !== 1) {
+    const detail =
+      operatorKeys.length === 0
+        ? 'has no comparison operator'
+        : `has ${operatorKeys.length} comparison operators (${operatorKeys.join(', ')}) — use and: [...] to combine conditions`;
+    throw new Error(
+      `Choice condition on variable "${resolveVariable(condition.variable)}" ${detail}`,
+    );
   }
 
-  return result;
+  const camel = operatorKeys[0]!;
+  const operand = (condition as Record<string, unknown>)[camel];
+  return {
+    Variable: resolveVariable(condition.variable),
+    // `*Path` operands are refs (or raw paths) — serialize the path,
+    // not the ref object.
+    [CONDITION_KEY_MAP[camel]!]: camel.endsWith('Path')
+      ? resolveVariable(operand as ChoiceVariable)
+      : operand,
+  };
 }

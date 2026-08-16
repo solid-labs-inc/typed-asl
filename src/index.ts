@@ -7,6 +7,7 @@ export type {
   ExactPayload,
   OptionalOutputKeys,
   RequireResultSelectorForOptionalOutputs,
+  RequireNoOptionalOutputs,
 } from './lib/types.js';
 export { createProxy, pathOf, isRef, createMapItemProxy } from './lib/proxy.js';
 export type { MapItemRef } from './lib/proxy.js';
@@ -44,6 +45,8 @@ export {
 export type {
   KnownAslError,
   AslErrorName,
+  AslCatchErrorOutput,
+  ResultPathKeyCheck,
   RetryConfig,
   LambdaTaskConfig,
   TimeoutConfig,

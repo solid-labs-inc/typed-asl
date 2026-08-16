@@ -131,6 +131,21 @@ export type RequireResultSelectorForOptionalOutputs<O extends AnyZodObject> = [
     };
 
 /**
+ * Compile-time gate for `customTask`'s `outputSchema`: the generated
+ * `ResultSelector` references every schema key, so optional fields are
+ * rejected — but unlike `task` there is no custom selector to reach for.
+ * The fix is naming only fields the service always returns, or dropping
+ * `outputSchema` for an untyped result.
+ */
+export type RequireNoOptionalOutputs<O extends AnyZodObject> = [
+  OptionalOutputKeys<O>,
+] extends [never]
+  ? unknown
+  : {
+      'output schema has optional fields — the generated ResultSelector references every key and ASL errors at runtime on absent ones; list only fields the service always returns, or drop outputSchema for an untyped result': OptionalOutputKeys<O>;
+    };
+
+/**
  * Companion to {@link TypedPayloadMapping}: marks every key of the mapping
  * `P` that is not in the schema as `never`, so extra fields fail to
  * compile. Plain assignability can't reject extra properties (and excess

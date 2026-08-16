@@ -6,6 +6,7 @@ import {
   SequenceBuilder,
   THROTTLE_RETRY,
   type InferContext,
+  type MapConfig,
   type RetryConfig,
 } from './builder.js';
 import { serializeCondition } from './choice.js';
@@ -3567,11 +3568,13 @@ describe('task with catch', () => {
             errorEquals: ['States.ALL'],
             resultPath: '$.taskError',
             handler: (b) => {
-              expectTypeOf(b).toExtend<
-                SequenceBuilder<
-                  { bucket: string } & Record<'taskError', unknown>
-                >
-              >();
+              type HandlerCtx = InferContext<typeof b>;
+              expectTypeOf<HandlerCtx['bucket']>().toEqualTypeOf<string>();
+              // The caught error is typed — Cause/Error are usable in
+              // choice conditions and payload mappings.
+              expectTypeOf<
+                HandlerCtx['taskError']['Cause']
+              >().toEqualTypeOf<string>();
               return b.succeed('recovered');
             },
           },
@@ -4191,6 +4194,50 @@ describe('customTask context typing', () => {
     const machine = b.build();
     const after = machine.States['After'] as Record<string, unknown>;
     expect(after['Parameters']).toEqual({ 'jobId.$': '$.transcodeJob.JobId' });
+
+    // outputSchema is load-bearing, exactly like task's: it generates a
+    // ResultSelector projecting each schema key from the raw result.
+    const transcode = machine.States['Transcode'] as Record<string, unknown>;
+    expect(transcode['ResultSelector']).toEqual({ 'JobId.$': '$.JobId' });
+  });
+
+  it('rejects an outputSchema with optional fields — no selector could be honest', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // Overload resolution pins one error per mismatched property:
+        // @ts-expect-error — the optional-field gate disqualifies the schema overloads
+        resultPath: '$.job',
+        // @ts-expect-error — same, anchored on the schema property
+        outputSchema: z.object({
+          JobId: z.string(),
+          JobArn: z.string().optional(),
+        }),
+      }),
+    ).toThrow('JobArn are optional');
+  });
+
+  it('a later resultPath overwrite replaces the key type instead of intersecting', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .customTask('first', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.job',
+        outputSchema: z.object({ oldField: z.string() }),
+      })
+      .customTask('second', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.job',
+        outputSchema: z.object({ newField: z.number() }),
+      });
+
+    // Runtime last-write-wins; the type follows. A stale `A & B`
+    // intersection here would let refs to oldField compile after the
+    // data was overwritten.
+    type After = InferContext<typeof b>;
+    expectTypeOf<After['job']>().toEqualTypeOf<{ newField: number }>();
   });
 
   it('without resultPath, the result replaces the whole input', () => {
@@ -4217,7 +4264,20 @@ describe('customTask context typing', () => {
     >();
   });
 
-  it('rejects a resultPath that is not $.{identifier}', () => {
+  it('rejects a resultPath that is not $.{identifier}, at compile time and runtime', () => {
+    // Compile time: ResultPathKeyCheck collapses the property to never
+    // (and the same guard throws when the statement runs).
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // @ts-expect-error — nested paths cannot be represented in the
+        // context type
+        resultPath: '$.a.b',
+      }),
+    ).toThrow('must be "$.{key}"');
+
+    // Runtime, for plain-JS callers (the cast bypasses the type check):
     expect(() =>
       new SequenceBuilder<Ctx>().customTask('submit', {
         resource: 'arn:aws:states:::batch:submitJob',
@@ -4225,6 +4285,74 @@ describe('customTask context typing', () => {
         resultPath: '$.a.b' as '$.x',
       }),
     ).toThrow('must be "$.{key}" with a single identifier key');
+  });
+});
+
+// ── Shared resultPath key guard on pass and catch ───────────────────
+
+describe('resultPath key guard on pass and catch', () => {
+  type Ctx = { bucket: string };
+
+  it('pass literal-result overload rejects nested resultPath', () => {
+    expect(() =>
+      // @ts-expect-error — nested resultPath desyncs the context type
+      new SequenceBuilder<Ctx>().pass('setFlag', {
+        result: true,
+        resultPath: '$.flags.done',
+      }),
+    ).toThrow('must be "$.{key}"');
+
+    expect(() =>
+      new SequenceBuilder<Ctx>().pass('setFlag', {
+        result: true,
+        resultPath: '$.flags.done' as '$.x',
+      }),
+    ).toThrow('must be "$.{key}" with a single identifier key');
+  });
+
+  it('catch config rejects nested resultPath', () => {
+    const attempt = () =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // The bad nested catch resultPath fails every overload; TS
+        // pins one error per mismatched property:
+        // @ts-expect-error — anchored on the outer resultPath
+        resultPath: '$.job',
+        catch: [
+          {
+            errorEquals: ['States.ALL'],
+            // @ts-expect-error — anchored on the offending entry
+            resultPath: '$.errors.last',
+            handler: (b) => b.succeed('recovered'),
+          },
+        ],
+      });
+    expect(attempt).toThrow('must be "$.{key}" with a single identifier key');
+  });
+});
+
+// ── Choice serializer guards ────────────────────────────────────────
+
+describe('choice condition serializer guards', () => {
+  const ctx = createProxy<{ a: string; n: number }>();
+
+  it('throws when a condition carries two operator keys', () => {
+    // Union assignability admits this shape (each key exists in some
+    // arm), so the serializer has to catch it.
+    expect(() =>
+      serializeCondition({
+        variable: ctx.a,
+        stringEquals: 'x',
+        numericGreaterThan: 1,
+      } as never),
+    ).toThrow('has 2 comparison operators');
+  });
+
+  it('throws when a condition has no operator at all', () => {
+    expect(() => serializeCondition({ variable: ctx.a } as never)).toThrow(
+      'has no comparison operator',
+    );
   });
 });
 
@@ -4269,5 +4397,68 @@ describe('map items ref selector', () => {
           b.pass('mark', () => ({ ok: true })),
       } as never),
     ).toThrow('needs either items (a typed ref selector) or itemsPath');
+  });
+});
+
+// ── map misconfiguration and config-type coverage ───────────────────
+
+describe('map misconfiguration errors', () => {
+  type Scene = { id: string };
+  type Ctx = { scenes: Scene[] };
+
+  it('missing items/itemsPath surfaces before the processor runs', () => {
+    // The processor throws — but the missing-source diagnostic must win,
+    // since it is checked before any user callback is invoked.
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('m', {
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: () => {
+          throw new Error('processor exploded');
+        },
+      } as never),
+    ).toThrow('needs either items (a typed ref selector) or itemsPath');
+  });
+
+  it('items returning a raw string gets a clear error, not a pathOf crash', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('m', {
+        items: (() => '$.scenes') as never,
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: (b: SequenceBuilder<{ scene: Scene }>) =>
+          b.pass('mark', () => ({ ok: true })),
+      }),
+    ).toThrow('items must return a typed ref from the context');
+  });
+
+  it('the exported MapConfig type admits the items form', () => {
+    // Consumers factor shared configs through MapConfig — the
+    // recommended items shape must be expressible with it.
+    const shared: MapConfig<
+      Ctx,
+      Scene,
+      { scene: Ref<Scene> },
+      { scene: Scene; mark: { ok: boolean } }
+    > = {
+      items: (ctx) => ctx.scenes,
+      itemSelector: (item) => ({ scene: item.value }),
+      processor: (b) => b.pass('mark', () => ({ ok: true })),
+    };
+    const machine = new SequenceBuilder<Ctx>().map('m', shared).build();
+    expect((machine.States['M'] as Record<string, unknown>)['ItemsPath']).toBe(
+      '$.scenes',
+    );
+  });
+
+  it('itemsPath literal inference handles readonly arrays', () => {
+    type ReadonlyCtx = { scenes: readonly Scene[] };
+    new SequenceBuilder<ReadonlyCtx>().map('m', {
+      itemsPath: '$.scenes',
+      itemSelector: (item) => {
+        // Without the readonly-aware conditional this would be never
+        expectTypeOf(item.value).toExtend<Ref<Scene>>();
+        return { scene: item.value };
+      },
+      processor: (b) => b.pass('mark', () => ({ ok: true })),
+    });
   });
 });

@@ -33,9 +33,14 @@ timestampPath })`, with a callback form for typed refs to the context
 - `map` accepts `items: (ctx) => ctx.scenes` — a typed ref selector with
   code completion — as the preferred alternative to a raw `itemsPath`
   string; `ItemType` is inferred from the ref.
-- `customTask` accepts an optional `outputSchema` (typing only — no
-  ResultSelector, no runtime validation) so its result is typed without
-  explicit generics.
+- `customTask` accepts an optional `outputSchema`, load-bearing exactly
+  like `task`'s: it generates a `ResultSelector` projecting each schema
+  key from the raw result (`{ "key.$": "$.key" }`) and types the context
+  from `z.infer` — no explicit generics. Optional fields are rejected,
+  same as `task`.
+- Catch handler contexts type the caught error as `AslCatchErrorOutput`
+  (`{ Error, Cause }`) instead of `unknown`, so `ctx.error.Cause` is a
+  `Ref<string>` usable in conditions and payloads.
 - Known ASL and Lambda error names autocomplete in `ErrorEquals`/
   `errorEquals` (`AslErrorName` — arbitrary custom error strings remain
   legal).
@@ -78,6 +83,26 @@ timestampPath })`, with a callback form for typed refs to the context
 
 ### Fixed
 
+- Context accumulation replaces an overwritten key's type instead of
+  intersecting (`Omit<Ctx, Key> & Record<Key, …>` across all state
+  methods) — previously a second write to the same `resultPath`/state
+  key kept the stale type alive, so refs to overwritten fields compiled.
+  `SequenceBuilder` is now explicitly invariant (`in out Ctx`).
+- Context-keyed `resultPath`s (`customTask`, `pass` literal-result,
+  catch configs) reject nested paths like `'$.a.b'` at compile time
+  (`ResultPathKeyCheck` collapses the property to `never`) and at build
+  time — previously `customTask` only threw and `pass`/catch silently
+  desynced the context type from where the data lands.
+- A choice condition carrying two operator keys (which union
+  assignability can't reject) or none at all now throws at serialization
+  instead of shipping a rule that tests the wrong comparison or invalid
+  ASL.
+- `map` validates its `items`/`itemsPath` configuration before running
+  the selector and processor callbacks, and a non-ref `items` return
+  gets a descriptive error instead of a `pathOf` crash; the exported
+  `MapConfig` type now admits the `items` form.
+- `itemsPath` literal inference (`PathValue`) handles `readonly` arrays
+  instead of resolving the item type to `never`.
 - A payload field not present in the input schema is now rejected — at
   compile time via `ExactPayload`/`NoExtraPayloadKeys` (both exported),
   and at runtime with a descriptive error. Previously an extra (usually

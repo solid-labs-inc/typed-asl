@@ -439,8 +439,9 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
     // (Batch, SNS, SDK integrations, …). The context follows ASL's
     // ResultPath semantics: with resultPath '$.job' the result is
     // ctx.job (NOT ctx.<stateName>), and omitting resultPath means the
-    // result replaces the entire input. outputSchema types the result —
-    // typing only, no ResultSelector, no runtime validation.
+    // result replaces the entire input. outputSchema drives the result
+    // exactly like task's: a ResultSelector projects each schema key
+    // from the raw result, so the typed context matches the data.
     const asl = new SequenceBuilder<Input>()
       .customTask('submitTranscode', {
         resource: 'arn:aws:states:::batch:submitJob',
@@ -451,9 +452,9 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
       .pass('report', (ctx) => ({ id: ctx.job.JobId })) // typed: string
       .build();
 
-    expect(
-      (asl.States.SubmitTranscode as Record<string, unknown>).ResultPath,
-    ).toBe('$.job');
+    const submit = asl.States.SubmitTranscode as Record<string, unknown>;
+    expect(submit.ResultPath).toBe('$.job');
+    expect(submit.ResultSelector).toEqual({ 'JobId.$': '$.JobId' });
     expect((asl.States.Report as any).Parameters['id.$']).toBe('$.job.JobId');
 
     // resultPath must be a single '$.{key}' — the context type is keyed
