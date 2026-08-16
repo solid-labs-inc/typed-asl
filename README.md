@@ -1,5 +1,8 @@
 # typed-asl
 
+[![npm](https://img.shields.io/npm/v/typed-asl)](https://www.npmjs.com/package/typed-asl)
+[![CI](https://github.com/solid-labs-inc/typed-asl/actions/workflows/ci.yml/badge.svg)](https://github.com/solid-labs-inc/typed-asl/actions/workflows/ci.yml)
+
 Generates Amazon States Language JSON from TypeScript, with compile-time proof that payload mappings match the Lambdas' Zod schemas and that every JSONPath ref resolves to a real upstream output of the right type.
 
 ```bash
@@ -10,7 +13,7 @@ npm install typed-asl zod
 
 Hand-written ASL and Lambda handler schemas are disconnected: misaligned payloads, dangling JSONPath references and type mismatches surface only at runtime, mid-execution. If a machine built here typechecks, its payloads are correct.
 
-Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, and out-of-range parallel branch indices.
+Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, and cross-branch parallel access (`ctx.par[1].stateFromBranch0`). Every guarantee here has a matching negative test (`src/lib/type-guarantees.test.ts`) that fails the build if the API stops rejecting the bad code.
 
 ```ts
 import { SequenceBuilder } from 'typed-asl';
@@ -82,7 +85,7 @@ Not yet supported, and worth knowing before you adopt:
 - **No `Wait` state**, and no state-level `TimeoutSeconds`/`HeartbeatSeconds`.
 - **Zod only.** Output schemas drive `ResultSelector` generation, so other validators aren't pluggable today.
 - **Optional output fields need a custom `resultSelector`.** The auto-generated selector maps every output schema key from `$.Payload.{key}`, and ASL errors at runtime when a referenced key is absent. If a Lambda may omit a field, pass an explicit `resultSelector`.
-- **`build()` does not validate against the ASL spec.** It guarantees your mappings and refs, not that AWS will accept every machine you can express.
+- **`build()` does not validate against the ASL spec.** It guarantees your mappings and refs, not that AWS will accept every machine you can express. (The library's own test fixtures are all checked against the spec with `asl-validator` in CI — your machines at build time are not.)
 
 This came out of a production monorepo, where it builds real state machines — but it has been shaped by a small number of them. Expect rough edges on shapes we haven't hit. Issues and PRs welcome.
 
