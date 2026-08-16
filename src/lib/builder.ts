@@ -11,6 +11,7 @@ import type {
   Ref,
   RequireNoOptionalOutputs,
   RequireResultSelectorForOptionalOutputs,
+  Simplify,
   TypedPayloadMapping,
 } from './types.js';
 
@@ -245,7 +246,7 @@ export interface MapConfig<
    * ```
    */
   processor: (
-    b: SequenceBuilder<UnwrapRefs<S>>,
+    b: SequenceBuilder<Simplify<UnwrapRefs<S>>>,
   ) => SequenceBuilder<ProcessorCtx>;
 }
 
@@ -361,6 +362,14 @@ export interface CatchConfig<Ctx, Key extends string = never> {
   errorEquals: AslErrorName[];
   resultPath?: `$.${Key}` & ResultPathKeyCheck<Key>;
 
+  // Deliberately not wrapped in `Simplify` like the builder's own
+  // context-widening returns are: this is a parameter position that
+  // overload resolution reads, and when `Key` degrades to `string`/`any`
+  // (a catch entry without a `resultPath` gives inference nothing to
+  // work from) `Record<Key, …>` is an index signature. Flattening merges
+  // it into every property — `jobName: string` becomes
+  // `string & AslCatchErrorOutput` — and the handler stops matching.
+  // Returns don't have that problem: `Key` is always resolved by then.
   handler: (
     b: SequenceBuilder<Ctx & Record<Key, AslCatchErrorOutput>>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -446,9 +455,11 @@ interface ChoiceBlock {
  */
 // `in out`: the context is consumed (payload callbacks) and produced
 // (the `_ctx` phantom), so the class is invariant — declared explicitly
-// because the `Omit<Ctx, Key>` method returns put `keyof Ctx` on the
-// surface, which defeats structural variance measurement and would
-// otherwise break even `SequenceBuilder<Ctx>` → `SequenceBuilder<any>`.
+// because the `Simplify<Omit<Ctx, Key> & …>` method returns put
+// `keyof Ctx` on the surface, which defeats structural variance
+// measurement and would otherwise break even `SequenceBuilder<Ctx>` →
+// `SequenceBuilder<any>`. Still verified load-bearing after the
+// `Simplify` wrapping: dropping it fails to compile.
 export class SequenceBuilder<in out Ctx> {
   /** @internal Type-level only — does not exist at runtime. */
   declare readonly _ctx: Ctx;
@@ -546,7 +557,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<UnwrapRefs<R>>;
+  ): SequenceBuilder<Simplify<UnwrapRefs<R>>>;
 
   /**
    * Overload: `resultPath: null` without `resultSelector` — the full Lambda
@@ -587,7 +598,9 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, UnwrapRefs<R>>>;
+  ): SequenceBuilder<
+    Simplify<Omit<Ctx, Name> & Record<Name, Simplify<UnwrapRefs<R>>>>
+  >;
 
   /**
    * Overload: without `resultSelector` — auto-generates a 1:1 mapping from
@@ -605,7 +618,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, z.infer<O>>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, z.infer<O>>>>;
 
   task(
     name: string,
@@ -715,7 +728,7 @@ export class SequenceBuilder<in out Ctx> {
     branches: [...Branches],
     options?: { retry?: RetryConfig[]; catch?: CatchConfig<Ctx, CatchKey>[] },
   ): SequenceBuilder<
-    Omit<Ctx, Name> & Record<Name, BranchOutputTuple<Ctx, Branches>>
+    Simplify<Omit<Ctx, Name> & Record<Name, BranchOutputTuple<Ctx, Branches>>>
   >;
 
   parallel(
@@ -774,7 +787,7 @@ export class SequenceBuilder<in out Ctx> {
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
     options: { resultPath: null },
-  ): SequenceBuilder<UnwrapRefs<M>>;
+  ): SequenceBuilder<Simplify<UnwrapRefs<M>>>;
 
   /**
    * Overload: no options — result stored at `$.{name}`, added to context.
@@ -782,7 +795,9 @@ export class SequenceBuilder<in out Ctx> {
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, UnwrapRefs<M>>>;
+  ): SequenceBuilder<
+    Simplify<Omit<Ctx, Name> & Record<Name, Simplify<UnwrapRefs<M>>>>
+  >;
 
   /**
    * Append a Pass state that injects a literal value at a given path.
@@ -802,7 +817,7 @@ export class SequenceBuilder<in out Ctx> {
   pass<R, Key extends string>(
     name: string,
     config: { result: R; resultPath: `$.${Key}` & ResultPathKeyCheck<Key> },
-  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, R>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Key> & Record<Key, R>>>;
 
   pass(
     name: string,
@@ -948,7 +963,7 @@ export class SequenceBuilder<in out Ctx> {
       items: (ctx: Proxied<Ctx>) => Ref<readonly ItemType[]>;
       itemsPath?: undefined;
     },
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
 
   /**
    * Overload: `itemsPath` is a string literal — `ItemType` inferred by
@@ -972,7 +987,7 @@ export class SequenceBuilder<in out Ctx> {
       itemsPath: ItemsPath;
       items?: undefined;
     },
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
 
   map<
     Name extends string,
@@ -983,7 +998,7 @@ export class SequenceBuilder<in out Ctx> {
   >(
     name: Name,
     config: MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey>,
-  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
 
   map(
     name: string,
@@ -1111,7 +1126,7 @@ export class SequenceBuilder<in out Ctx> {
       resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
       outputSchema: OSchema;
     } & RequireNoOptionalOutputs<OSchema>,
-  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, z.infer<OSchema>>>;
+  ): SequenceBuilder<Simplify<Omit<Ctx, Key> & Record<Key, z.infer<OSchema>>>>;
 
   /** Overload: `resultPath` only — untyped result at `ctx.{key}`. */
   customTask<Key extends string, CatchKey extends string = never>(
@@ -1120,7 +1135,9 @@ export class SequenceBuilder<in out Ctx> {
       resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
       outputSchema?: undefined;
     },
-  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, Record<string, unknown>>>;
+  ): SequenceBuilder<
+    Simplify<Omit<Ctx, Key> & Record<Key, Record<string, unknown>>>
+  >;
 
   /** Overload: no `resultPath` — the typed output replaces the input. */
   customTask<OSchema extends AnyZodObject, CatchKey extends string = never>(
@@ -1234,7 +1251,7 @@ export class SequenceBuilder<in out Ctx> {
   choice<Adds>(
     name: string,
     configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
-  ): SequenceBuilder<Ctx & Adds>;
+  ): SequenceBuilder<Simplify<Ctx & Adds>>;
 
   choice(
     name: string,
