@@ -49,6 +49,57 @@ land silently.
 - TypeScript 7.0 is stable; the matrix runs `^5` and `latest` (the pinned
   `~5.7.2` is covered by the build job's own typecheck).
 
+### M1 follow-up: publishing the evidence (August 2026)
+
+M1 produced the guarantees; this pass made them visible and hardened the
+supply chain the badges implicitly vouch for.
+
+- Badge row settled at six, all machine-checked: CI, coverage, npm
+  version, npm provenance, zero runtime dependencies, OpenSSF Scorecard.
+  Deliberately excluded — download counts (volatile on a young package,
+  and a dip reads as abandonment), bundlephobia and packagephobia (both
+  verified failing: upstream rate limit and a bot checkpoint), stars, and
+  anything CI already proves (Prettier/ESLint/"types included").
+- **Four of the six are in the README; two are staged** — see the open
+  item below. A badge that renders `unknown` or `invalid repo path` is
+  worse than an absent one in a README whose subject is reliability, so
+  neither goes in before its data source is live.
+- The README's **How this is verified** section carries the real weight;
+  the row is a summary of it. The coverage figure quoted there is the
+  _threshold floor_, not the measured value, so it stays true as long as
+  the ratchet holds and only ever understates.
+- Codecov is reporting only — `codecov.yml` marks both statuses
+  informational and the upload runs with `fail_ci_if_error: false`.
+  Enforcement stays in `vitest.config.ts`, so a third-party outage cannot
+  block a merge or turn a red build green.
+- All actions are SHA-pinned with a trailing version comment, workflows
+  declare default-deny `permissions`, and checkouts use
+  `persist-credentials: false`. Dependabot's github-actions ecosystem
+  bumps the pins and rewrites the comments, so this does not rot.
+- Not adopted: CodeQL (a pure-transform library with no IO surfaces
+  nothing) and Socket.dev (its subject is dependency risk; there are no
+  runtime dependencies).
+
+**Open — add the two staged badges** (S). Each is one line at the top of
+the README, blocked only on its data source going live:
+
+```markdown
+[![coverage](https://img.shields.io/codecov/c/github/solid-labs-inc/typed-asl?label=coverage)](https://codecov.io/gh/solid-labs-inc/typed-asl)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/solid-labs-inc/typed-asl?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/solid-labs-inc/typed-asl)
+```
+
+- _Coverage_ needs `CODECOV_TOKEN` in the repo's Actions secrets (from
+  codecov.io after enabling the repo) plus one `main` run that uploads.
+  Until then the badge reads `coverage: unknown`. The CI upload step is
+  already wired and non-fatal, so nothing breaks while the token is
+  missing.
+- _Scorecard_ needs this branch merged — the workflow only triggers on
+  `main` — and then a run with `publish_results: true` landing in the
+  public OpenSSF dataset, which can lag by up to a day. Until then the
+  badge reads `invalid repo path`. Insert it after confirming
+  `https://api.securityscorecards.dev/projects/github.com/solid-labs-inc/typed-asl`
+  returns a score.
+
 ## M2 — Ergonomics and small states (0.3.0)
 
 Each item is independently shippable; 0.3.0 cuts when they're all in.

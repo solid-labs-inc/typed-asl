@@ -1,0 +1,16 @@
+# The coverage gate lives in vitest.config.ts as ratchet-only thresholds,
+# which fail the build locally and in CI. Codecov here is reporting, not
+# enforcement: its statuses stay informational so a third-party service
+# can never block a PR that the real gate already passed.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: 'reach, diff, files'
+  require_changes: true
