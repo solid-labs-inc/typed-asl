@@ -19,10 +19,16 @@ import { describe, it, expect, expectTypeOf } from 'vitest';
 import {
   createProxy,
   statesArray,
+  statesArrayGetItem,
   statesArrayLength,
+  statesArrayPartition,
+  statesArrayRange,
   statesFormat,
+  statesHash,
+  statesJsonMerge,
   statesJsonToString,
   statesMathAdd,
+  statesStringSplit,
   statesStringToJson,
   statesUuid,
   getExpression,
@@ -142,6 +148,41 @@ describe('Chapter 6: Intrinsic Functions', () => {
     const expr = statesUuid();
     expect(getExpression(expr)).toBe('States.UUID()');
     expectTypeOf(expr).toExtend<IntrinsicExpr<string>>();
+  });
+
+  // ── The full intrinsic library ───────────────────────────────────────
+
+  it('array, string, math, and encoding intrinsics are all covered', () => {
+    type Ctx = {
+      frames: number[];
+      key: string;
+      defaults: { width: number };
+      overrides: { width: number };
+      count: number;
+    };
+    const ctx = createProxy<Ctx>();
+
+    // A representative sample — every function follows the same pattern:
+    // typed refs/intrinsics/literals in, IntrinsicExpr<Result> out.
+    // See src/lib/intrinsic.test.ts for the full matrix.
+    expect(getExpression(statesArrayGetItem(ctx.frames, 0))).toBe(
+      'States.ArrayGetItem($.frames, 0)',
+    );
+    expect(getExpression(statesArrayPartition(ctx.frames, 100))).toBe(
+      'States.ArrayPartition($.frames, 100)',
+    );
+    expect(getExpression(statesStringSplit(ctx.key, '/'))).toBe(
+      "States.StringSplit($.key, '/')",
+    );
+    expect(getExpression(statesJsonMerge(ctx.defaults, ctx.overrides))).toBe(
+      'States.JsonMerge($.defaults, $.overrides, false)', // shallow only
+    );
+    expect(getExpression(statesHash(ctx.key, 'SHA-256'))).toBe(
+      "States.Hash($.key, 'SHA-256')",
+    );
+    expect(getExpression(statesArrayRange(0, ctx.count, 10))).toBe(
+      'States.ArrayRange(0, $.count, 10)',
+    );
   });
 
   // ── Intrinsics in serialization ──────────────────────────────────────

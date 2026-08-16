@@ -189,4 +189,52 @@ describe('Chapter 3: Zod Schemas as the Contract', () => {
       'storageRef.$': '$.Payload.outputStorageRef',
     });
   });
+
+  // ── Optional output fields require an explicit resultSelector ────────
+
+  it('optional output fields cannot use the auto-generated selector', () => {
+    // The auto-generated ResultSelector references every output schema
+    // key, and JSONPath-mode ASL errors at runtime when a referenced key
+    // is absent. So a schema with .optional() fields must pass an
+    // explicit resultSelector — this is enforced at compile time (the
+    // config stops typechecking) and at build time:
+    const TranscribeOutput = z.object({
+      transcript: z.string().optional(),
+      language: z.string(),
+    });
+    type Input = { videoId: string };
+
+    expect(() =>
+      new SequenceBuilder<Input>().task(
+        'transcribe',
+        // @ts-expect-error — optional `transcript` demands an explicit
+        // resultSelector; the compiler error names the requirement
+        {
+          inputSchema: z.object({ videoId: z.string() }),
+          outputSchema: TranscribeOutput,
+          functionArn: '${lambda_arn}',
+        },
+        () => ({ videoId: 'v1' }),
+      ),
+    ).toThrow('optional');
+
+    // The fix: select only what the Lambda always returns (or reshape
+    // however you like — the selector is yours).
+    const asl = new SequenceBuilder<Input>()
+      .task(
+        'transcribe',
+        {
+          inputSchema: z.object({ videoId: z.string() }),
+          outputSchema: TranscribeOutput,
+          functionArn: '${lambda_arn}',
+          resultSelector: (output) => ({ language: output.language }),
+        },
+        (ctx) => ({ videoId: ctx.videoId }),
+      )
+      .build();
+
+    expect(
+      (asl.States.Transcribe as Record<string, unknown>).ResultSelector,
+    ).toEqual({ 'language.$': '$.Payload.language' });
+  });
 });

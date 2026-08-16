@@ -32,12 +32,21 @@ export type Ref<T> = {
  * typed reference in payload mappings.
  */
 export type Proxied<T> = Ref<T> &
-  // Tuple/array: mapped tuple preserves per-index types
   (T extends readonly unknown[]
-    ? { readonly [K in keyof T]: Proxied<T[K]> }
-    : unknown) &
-  // Object: named property access
-  (T extends object ? { readonly [K in keyof T]-?: Proxied<T[K]> } : unknown);
+    ? number extends T['length']
+      ? // Plain array: any index yields the element type
+        { readonly [index: number]: Proxied<T[number]> }
+      : // Tuple: only the literal indices that exist. A plain mapped
+        // tuple would carry an array number-index signature, which lets
+        // an out-of-range index like tup[2] through — this keyed object
+        // form makes it a compile error. Array methods are deliberately
+        // absent from both branches: `ctx.arr.map` would record the
+        // JSONPath `$.arr.map`, which is never what anyone means.
+        { readonly [K in Extract<keyof T, `${number}`>]: Proxied<T[K]> }
+    : T extends object
+      ? // Object: named property access
+        { readonly [K in keyof T]-?: Proxied<T[K]> }
+      : unknown);
 
 /**
  * Any Zod object schema. Uses the `shape` property which is available
@@ -94,6 +103,32 @@ export type TypedPayloadMapping<T extends AnyZodObject> = {
     | Ref<z.infer<T['shape'][K]>>
     | IntrinsicExpr<z.infer<T['shape'][K]>>;
 };
+
+/**
+ * The keys of an output schema whose values may be absent (`.optional()`
+ * or otherwise admitting `undefined`).
+ */
+export type OptionalOutputKeys<O extends AnyZodObject> = {
+  [K in keyof O['shape']]: undefined extends z.infer<O['shape'][K]> ? K : never;
+}[keyof O['shape']];
+
+/**
+ * Compile-time gate for the `task()` overloads that auto-generate a
+ * `ResultSelector`: the generated selector references every output schema
+ * key, and JSONPath-mode ASL errors at runtime when a referenced key is
+ * absent — so a schema with optional fields must pass an explicit
+ * `resultSelector` instead. Resolves to `unknown` (no constraint) when
+ * the schema has no optional fields; otherwise to an object type whose
+ * property name is the error message, which is what surfaces in the
+ * compiler output.
+ */
+export type RequireResultSelectorForOptionalOutputs<O extends AnyZodObject> = [
+  OptionalOutputKeys<O>,
+] extends [never]
+  ? unknown
+  : {
+      'output schema has optional fields, which the auto-generated ResultSelector would reference unconditionally — ASL errors at runtime on absent keys, so pass an explicit resultSelector': OptionalOutputKeys<O>;
+    };
 
 /**
  * Companion to {@link TypedPayloadMapping}: marks every key of the mapping

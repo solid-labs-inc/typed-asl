@@ -158,24 +158,31 @@ function literalToString(value: string | number | boolean | null): string {
 export function statesArray<T>(
   ...items: (Ref<T> | IntrinsicExpr<T> | T)[]
 ): IntrinsicExpr<T[]> {
-  const parts = items.map((item) => {
-    if (isRef(item) || isIntrinsic(item)) {
-      return argToString(item);
-    }
-    if (
-      item === null ||
-      typeof item === 'string' ||
-      typeof item === 'number' ||
-      typeof item === 'boolean'
-    ) {
-      return literalToString(item as string | number | boolean | null);
-    }
-    throw new Error(
-      'statesArray() literal arguments must be strings, numbers, booleans or null — ' +
-        'objects cannot appear as intrinsic function arguments',
-    );
-  });
+  const parts = items.map((item) => valueToString(item, 'statesArray()'));
   return createIntrinsic<T[]>(`States.Array(${parts.join(', ')})`);
+}
+
+/**
+ * Serialize a ref, intrinsic, or literal as an intrinsic function
+ * argument. Objects are rejected — they cannot appear as intrinsic
+ * arguments in ASL.
+ */
+function valueToString(value: unknown, fnName: string): string {
+  if (isRef(value) || isIntrinsic(value)) {
+    return argToString(value);
+  }
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return literalToString(value);
+  }
+  throw new Error(
+    `${fnName} literal arguments must be strings, numbers, booleans or null — ` +
+      'objects cannot appear as intrinsic function arguments',
+  );
 }
 
 /**
@@ -218,4 +225,194 @@ export function statesStringToJson<T = unknown>(
  */
 export function statesUuid(): IntrinsicExpr<string> {
   return createIntrinsic<string>('States.UUID()');
+}
+
+/** A numeric intrinsic argument: a literal, a ref, or another intrinsic. */
+type NumberArg = number | Ref<number> | IntrinsicExpr<number>;
+
+/** A string intrinsic argument: a literal, a ref, or another intrinsic. */
+type StringArg = string | Ref<string> | IntrinsicExpr<string>;
+
+/** An array intrinsic argument: a ref to an array, or an intrinsic producing one. */
+type ArrayArg<T> = Ref<readonly T[]> | IntrinsicExpr<T[]>;
+
+/**
+ * Step Functions `States.ArrayGetItem()` intrinsic function.
+ *
+ * @example
+ * ```ts
+ * statesArrayGetItem(ctx.scenes, ctx.index)
+ * // → "States.ArrayGetItem($.scenes, $.index)"
+ * ```
+ */
+export function statesArrayGetItem<T>(
+  array: ArrayArg<T>,
+  index: NumberArg,
+): IntrinsicExpr<T> {
+  return createIntrinsic<T>(
+    `States.ArrayGetItem(${argToString(array)}, ${valueToString(index, 'statesArrayGetItem()')})`,
+  );
+}
+
+/**
+ * Step Functions `States.ArrayContains()` intrinsic function.
+ *
+ * @example
+ * ```ts
+ * statesArrayContains(ctx.allowedTypes, ctx.assetType)
+ * // → "States.ArrayContains($.allowedTypes, $.assetType)"
+ * ```
+ */
+export function statesArrayContains<T>(
+  array: ArrayArg<T>,
+  value: T | Ref<T> | IntrinsicExpr<T>,
+): IntrinsicExpr<boolean> {
+  return createIntrinsic<boolean>(
+    `States.ArrayContains(${argToString(array)}, ${valueToString(value, 'statesArrayContains()')})`,
+  );
+}
+
+/**
+ * Step Functions `States.ArrayRange()` intrinsic function.
+ *
+ * Produces `[start, start+step, …]` up to and including `end`. AWS caps
+ * the result at 1000 elements.
+ *
+ * @example
+ * ```ts
+ * statesArrayRange(0, ctx.frameCount, 10)
+ * // → "States.ArrayRange(0, $.frameCount, 10)"
+ * ```
+ */
+export function statesArrayRange(
+  start: NumberArg,
+  end: NumberArg,
+  step: NumberArg,
+): IntrinsicExpr<number[]> {
+  const args = [start, end, step]
+    .map((a) => valueToString(a, 'statesArrayRange()'))
+    .join(', ');
+  return createIntrinsic<number[]>(`States.ArrayRange(${args})`);
+}
+
+/**
+ * Step Functions `States.ArrayUnique()` intrinsic function.
+ */
+export function statesArrayUnique<T>(array: ArrayArg<T>): IntrinsicExpr<T[]> {
+  return createIntrinsic<T[]>(`States.ArrayUnique(${argToString(array)})`);
+}
+
+/**
+ * Step Functions `States.ArrayPartition()` intrinsic function.
+ *
+ * Chunks an array into sub-arrays of at most `size` elements.
+ *
+ * @example
+ * ```ts
+ * statesArrayPartition(ctx.frames, 100)
+ * // → "States.ArrayPartition($.frames, 100)"
+ * ```
+ */
+export function statesArrayPartition<T>(
+  array: ArrayArg<T>,
+  size: NumberArg,
+): IntrinsicExpr<T[][]> {
+  return createIntrinsic<T[][]>(
+    `States.ArrayPartition(${argToString(array)}, ${valueToString(size, 'statesArrayPartition()')})`,
+  );
+}
+
+/**
+ * Step Functions `States.JsonMerge()` intrinsic function.
+ *
+ * Shallow-merges two objects (`b` wins on conflicts). The third ASL
+ * argument is always `false`: AWS only supports shallow merge.
+ *
+ * @example
+ * ```ts
+ * statesJsonMerge(ctx.defaults, ctx.overrides)
+ * // → "States.JsonMerge($.defaults, $.overrides, false)"
+ * ```
+ */
+export function statesJsonMerge<A extends object, B extends object>(
+  a: Ref<A> | IntrinsicExpr<A>,
+  b: Ref<B> | IntrinsicExpr<B>,
+): IntrinsicExpr<Omit<A, keyof B> & B> {
+  return createIntrinsic<Omit<A, keyof B> & B>(
+    `States.JsonMerge(${argToString(a)}, ${argToString(b)}, false)`,
+  );
+}
+
+/**
+ * Step Functions `States.MathRandom()` intrinsic function.
+ *
+ * Returns a random integer in `[start, end]`. Pass a `seed` for
+ * reproducible values.
+ */
+export function statesMathRandom(
+  start: NumberArg,
+  end: NumberArg,
+  seed?: number,
+): IntrinsicExpr<number> {
+  const args = [start, end, ...(seed !== undefined ? [seed] : [])]
+    .map((a) => valueToString(a, 'statesMathRandom()'))
+    .join(', ');
+  return createIntrinsic<number>(`States.MathRandom(${args})`);
+}
+
+/**
+ * Step Functions `States.StringSplit()` intrinsic function.
+ *
+ * @example
+ * ```ts
+ * statesStringSplit(ctx.key, '/')
+ * // → "States.StringSplit($.key, '/')"
+ * ```
+ */
+export function statesStringSplit(
+  value: StringArg,
+  delimiter: StringArg,
+): IntrinsicExpr<string[]> {
+  return createIntrinsic<string[]>(
+    `States.StringSplit(${valueToString(value, 'statesStringSplit()')}, ${valueToString(delimiter, 'statesStringSplit()')})`,
+  );
+}
+
+/**
+ * Step Functions `States.Base64Encode()` intrinsic function.
+ */
+export function statesBase64Encode(value: StringArg): IntrinsicExpr<string> {
+  return createIntrinsic<string>(
+    `States.Base64Encode(${valueToString(value, 'statesBase64Encode()')})`,
+  );
+}
+
+/**
+ * Step Functions `States.Base64Decode()` intrinsic function.
+ */
+export function statesBase64Decode(value: StringArg): IntrinsicExpr<string> {
+  return createIntrinsic<string>(
+    `States.Base64Decode(${valueToString(value, 'statesBase64Decode()')})`,
+  );
+}
+
+/** Hash algorithms supported by `States.Hash()`. */
+export type HashAlgorithm = 'MD5' | 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512';
+
+/**
+ * Step Functions `States.Hash()` intrinsic function.
+ *
+ * @example
+ * ```ts
+ * statesHash(ctx.fileUpload.id, 'SHA-256')
+ * // → "States.Hash($.fileUpload.id, 'SHA-256')"
+ * ```
+ */
+export function statesHash(
+  data: StringArg | Ref<unknown> | IntrinsicExpr<unknown>,
+  algorithm: HashAlgorithm,
+): IntrinsicExpr<string> {
+  return createIntrinsic<string>(
+    `States.Hash(${valueToString(data, 'statesHash()')}, '${algorithm}')`,
+  );
 }

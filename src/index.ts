@@ -5,6 +5,8 @@ export type {
   TypedPayloadMapping,
   NoExtraPayloadKeys,
   ExactPayload,
+  OptionalOutputKeys,
+  RequireResultSelectorForOptionalOutputs,
 } from './lib/types.js';
 export { createProxy, pathOf, isRef, createMapItemProxy } from './lib/proxy.js';
 export type { MapItemRef } from './lib/proxy.js';
@@ -13,14 +15,25 @@ export {
   isIntrinsic,
   getExpression,
   statesArray,
+  statesArrayContains,
+  statesArrayGetItem,
   statesArrayLength,
+  statesArrayPartition,
+  statesArrayRange,
+  statesArrayUnique,
+  statesBase64Decode,
+  statesBase64Encode,
   statesFormat,
+  statesHash,
+  statesJsonMerge,
   statesJsonToString,
   statesMathAdd,
+  statesMathRandom,
+  statesStringSplit,
   statesStringToJson,
   statesUuid,
 } from './lib/intrinsic.js';
-export type { IntrinsicExpr } from './lib/intrinsic.js';
+export type { IntrinsicExpr, HashAlgorithm } from './lib/intrinsic.js';
 export {
   SequenceBuilder,
   DEFAULT_RETRY,
@@ -31,8 +44,11 @@ export {
 export type {
   RetryConfig,
   LambdaTaskConfig,
+  TimeoutConfig,
+  WaitConfig,
   AslStateMachine,
   InferContext,
+  BranchInput,
   BranchOutputTuple,
   UnwrapRefs,
   MapConfig,

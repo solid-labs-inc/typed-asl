@@ -3831,3 +3831,336 @@ describe('extra payload key rejection at runtime', () => {
     ).toThrow('Payload field "refs[1].keey" is not in the input schema');
   });
 });
+
+// ── M2: Wait state ──────────────────────────────────────────────────
+
+describe('wait', () => {
+  type Ctx = { delaySeconds: number; job: { notBefore: string } };
+
+  it('serializes each of the four variants', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .wait('cooldown', { seconds: 30 })
+      .wait('untilDate', { timestamp: '2026-09-01T00:00:00Z' })
+      .wait('dataDelay', { secondsPath: createProxy<Ctx>().delaySeconds })
+      .wait('dataDate', (c) => ({ timestampPath: c.job.notBefore }))
+      .succeed('done')
+      .build();
+
+    expect(machine.States['Cooldown']).toMatchObject({
+      Type: 'Wait',
+      Seconds: 30,
+    });
+    expect(machine.States['UntilDate']).toMatchObject({
+      Type: 'Wait',
+      Timestamp: '2026-09-01T00:00:00Z',
+    });
+    expect(machine.States['DataDelay']).toMatchObject({
+      Type: 'Wait',
+      SecondsPath: '$.delaySeconds',
+    });
+    expect(machine.States['DataDate']).toMatchObject({
+      Type: 'Wait',
+      TimestampPath: '$.job.notBefore',
+    });
+  });
+
+  it('leaves the context type unchanged', () => {
+    const b = new SequenceBuilder<Ctx>().wait('w', { seconds: 1 });
+    expectTypeOf(b).toEqualTypeOf<SequenceBuilder<Ctx>>();
+  });
+
+  it('requires exactly one option', () => {
+    expect(() => new SequenceBuilder<Ctx>().wait('w', {} as never)).toThrow(
+      'exactly one of seconds, timestamp, secondsPath, timestampPath',
+    );
+    expect(() =>
+      new SequenceBuilder<Ctx>().wait('w', {
+        seconds: 1,
+        timestamp: 'x',
+      } as never),
+    ).toThrow('exactly one of');
+  });
+});
+
+// ── M2: Timeouts and heartbeats ─────────────────────────────────────
+
+describe('task timeouts', () => {
+  type Ctx = { bucket: string; key: string; budgetSeconds: number };
+  const config = {
+    inputSchema: LoadFileUploadInput,
+    outputSchema: LoadFileUploadOutput,
+    functionArn: LAMBDA_ARN,
+  };
+  const payload = (ctx: Proxied<Ctx>) => ({
+    step: 'load-file-upload' as const,
+    bucket: ctx.bucket,
+    key: ctx.key,
+  });
+
+  it('serializes static timeout and heartbeat on task', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFileUpload',
+        { ...config, timeoutSeconds: 300, heartbeatSeconds: 60 },
+        payload,
+      )
+      .build();
+
+    expect(machine.States['LoadFileUpload']).toMatchObject({
+      TimeoutSeconds: 300,
+      HeartbeatSeconds: 60,
+    });
+  });
+
+  it('serializes path variants from typed refs', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFileUpload',
+        {
+          ...config,
+          timeoutSecondsPath: createProxy<Ctx>().budgetSeconds,
+        },
+        payload,
+      )
+      .build();
+
+    expect(machine.States['LoadFileUpload']).toMatchObject({
+      TimeoutSecondsPath: '$.budgetSeconds',
+    });
+  });
+
+  it('serializes timeouts on customTask', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ Bucket: ctx.bucket }),
+        resultPath: '$.transcode',
+        timeoutSeconds: 3600,
+      })
+      .build();
+
+    expect(machine.States['Transcode']).toMatchObject({
+      TimeoutSeconds: 3600,
+    });
+  });
+
+  it('rejects static + path for the same option', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'loadFileUpload',
+        {
+          ...config,
+          timeoutSeconds: 300,
+          timeoutSecondsPath: createProxy<Ctx>().budgetSeconds,
+        },
+        payload,
+      ),
+    ).toThrow('mutually exclusive');
+  });
+});
+
+// ── M2: *Path choice operators ──────────────────────────────────────
+
+describe('choice *Path operators', () => {
+  type Ctx = { a: number; b: number; s: string; t: string; flag: boolean };
+  const ctx = createProxy<Ctx>();
+
+  it.each([
+    [
+      'stringEqualsPath',
+      { variable: ctx.s, stringEqualsPath: ctx.t },
+      'StringEqualsPath',
+    ],
+    [
+      'numericLessThanPath',
+      { variable: ctx.a, numericLessThanPath: ctx.b },
+      'NumericLessThanPath',
+    ],
+    [
+      'numericGreaterThanEqualsPath',
+      { variable: ctx.a, numericGreaterThanEqualsPath: ctx.b },
+      'NumericGreaterThanEqualsPath',
+    ],
+    [
+      'booleanEqualsPath',
+      { variable: ctx.flag, booleanEqualsPath: ctx.flag },
+      'BooleanEqualsPath',
+    ],
+    [
+      'timestampLessThanPath',
+      { variable: ctx.s, timestampLessThanPath: ctx.t },
+      'TimestampLessThanPath',
+    ],
+  ] as const)(
+    'serializes %s with the operand as a path',
+    (_name, condition, pascal) => {
+      const serialized = serializeCondition(condition as never);
+      expect(serialized['Variable']).toMatch(/^\$\./);
+      expect(typeof serialized[pascal]).toBe('string');
+      expect(serialized[pascal]).toMatch(/^\$\./);
+    },
+  );
+
+  it('produces a working Choice state end to end', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .choice('compare', (c) => ({
+        choices: [
+          {
+            when: { variable: c.a, numericLessThanPath: c.b },
+            then: (b) => b.succeed('aSmaller'),
+          },
+        ],
+        default: (b) => b.succeed('bSmaller'),
+      }))
+      .build();
+
+    const choice = machine.States['Compare'] as Record<string, unknown>;
+    expect((choice['Choices'] as unknown[])[0]).toMatchObject({
+      Variable: '$.a',
+      NumericLessThanPath: '$.b',
+      Next: 'ASmaller',
+    });
+  });
+});
+
+// ── M2: parallel branch factories ───────────────────────────────────
+
+describe('parallel branch factories', () => {
+  type Ctx = { bucket: string; key: string };
+  const extractConfig = {
+    inputSchema: ExtractFramesInput,
+    outputSchema: ExtractFramesOutput,
+    functionArn: LAMBDA_ARN,
+  };
+  const transcodeConfig = {
+    inputSchema: TranscodePreviewInput,
+    outputSchema: TranscodePreviewOutput,
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('factory branches produce the same ASL as prebuilt builders', () => {
+    const viaFactories = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        (b) =>
+          b.task('extractFrames', extractConfig, (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+        (b) =>
+          b.task('transcodePreview', transcodeConfig, (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+      ])
+      .build();
+
+    const viaPrebuilt = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        new SequenceBuilder<Ctx>().task(
+          'extractFrames',
+          extractConfig,
+          (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          }),
+        ),
+        new SequenceBuilder<Ctx>().task(
+          'transcodePreview',
+          transcodeConfig,
+          (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          }),
+        ),
+      ])
+      .build();
+
+    expect(viaFactories).toEqual(viaPrebuilt);
+  });
+
+  it('keeps per-index branch types through the factory form', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        (bb) =>
+          bb.task('extractFrames', extractConfig, (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+        (bb) =>
+          bb.task('transcodePreview', transcodeConfig, (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+      ])
+      .pass('after', (ctx) => ({
+        width: ctx.process[0].extractFrames.width,
+        preview: ctx.process[1].transcodePreview.previewStorageRef,
+      }));
+
+    // If per-index inference degraded to a union, `extractFrames` would
+    // not be accessible on index 0 without narrowing and this would not
+    // compile; the negative cross-branch case lives in
+    // type-guarantees.test.ts.
+    expectTypeOf(b).not.toBeAny();
+  });
+
+  it('mixes factory and prebuilt branches', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        new SequenceBuilder<Ctx>().pass('markA', () => ({ a: 1 })),
+        (b) => b.pass('markB', () => ({ b: 2 })),
+      ])
+      .build();
+
+    const state = machine.States['Process'] as { Branches: unknown[] };
+    expect(state.Branches).toHaveLength(2);
+  });
+});
+
+// ── M2: optional output fields require an explicit resultSelector ───
+
+describe('optional output fields', () => {
+  type Ctx = { videoId: string };
+  const OptionalOutput = z.object({
+    transcript: z.string().optional(),
+    always: z.string(),
+  });
+  const config = {
+    inputSchema: z.object({ videoId: z.string() }),
+    outputSchema: OptionalOutput,
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('throws at build time without an explicit resultSelector', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'transcribe',
+        config as never,
+        ((ctx: Proxied<Ctx>) => ({ videoId: ctx.videoId })) as never,
+      ),
+    ).toThrow('output schema field(s) transcript are optional');
+  });
+
+  it('builds fine with an explicit resultSelector', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'transcribe',
+        {
+          ...config,
+          resultSelector: (output) => ({ always: output.always }),
+        },
+        (ctx) => ({ videoId: ctx.videoId }),
+      )
+      .build();
+
+    expect(machine.States['Transcribe']).toMatchObject({
+      ResultSelector: { 'always.$': '$.Payload.always' },
+    });
+  });
+});

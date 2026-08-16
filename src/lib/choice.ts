@@ -38,6 +38,41 @@ export type ChoiceCondition =
   | { variable: ChoiceVariable; isString: boolean }
   | { variable: ChoiceVariable; isBoolean: boolean }
   | { variable: ChoiceVariable; isTimestamp: boolean }
+  // `*Path` variants compare two values from the state data. The operand
+  // is a typed ref, and the variable is required to agree with it —
+  // `numericLessThanPath` wants Ref<number> on both sides. (StringMatches
+  // has no Path variant in the ASL spec.)
+  | { variable: Ref<string> | string; stringEqualsPath: Ref<string> }
+  | { variable: Ref<string> | string; stringLessThanPath: Ref<string> }
+  | { variable: Ref<string> | string; stringGreaterThanPath: Ref<string> }
+  | { variable: Ref<string> | string; stringLessThanEqualsPath: Ref<string> }
+  | {
+      variable: Ref<string> | string;
+      stringGreaterThanEqualsPath: Ref<string>;
+    }
+  | { variable: Ref<number> | string; numericEqualsPath: Ref<number> }
+  | { variable: Ref<number> | string; numericLessThanPath: Ref<number> }
+  | { variable: Ref<number> | string; numericGreaterThanPath: Ref<number> }
+  | {
+      variable: Ref<number> | string;
+      numericLessThanEqualsPath: Ref<number>;
+    }
+  | {
+      variable: Ref<number> | string;
+      numericGreaterThanEqualsPath: Ref<number>;
+    }
+  | { variable: Ref<boolean> | string; booleanEqualsPath: Ref<boolean> }
+  | { variable: Ref<string> | string; timestampEqualsPath: Ref<string> }
+  | { variable: Ref<string> | string; timestampLessThanPath: Ref<string> }
+  | { variable: Ref<string> | string; timestampGreaterThanPath: Ref<string> }
+  | {
+      variable: Ref<string> | string;
+      timestampLessThanEqualsPath: Ref<string>;
+    }
+  | {
+      variable: Ref<string> | string;
+      timestampGreaterThanEqualsPath: Ref<string>;
+    }
   | { and: ChoiceCondition[] }
   | { or: ChoiceCondition[] }
   | { not: ChoiceCondition };
@@ -69,6 +104,22 @@ const CONDITION_KEY_MAP: Record<string, string> = {
   isString: 'IsString',
   isBoolean: 'IsBoolean',
   isTimestamp: 'IsTimestamp',
+  stringEqualsPath: 'StringEqualsPath',
+  stringLessThanPath: 'StringLessThanPath',
+  stringGreaterThanPath: 'StringGreaterThanPath',
+  stringLessThanEqualsPath: 'StringLessThanEqualsPath',
+  stringGreaterThanEqualsPath: 'StringGreaterThanEqualsPath',
+  numericEqualsPath: 'NumericEqualsPath',
+  numericLessThanPath: 'NumericLessThanPath',
+  numericGreaterThanPath: 'NumericGreaterThanPath',
+  numericLessThanEqualsPath: 'NumericLessThanEqualsPath',
+  numericGreaterThanEqualsPath: 'NumericGreaterThanEqualsPath',
+  booleanEqualsPath: 'BooleanEqualsPath',
+  timestampEqualsPath: 'TimestampEqualsPath',
+  timestampLessThanPath: 'TimestampLessThanPath',
+  timestampGreaterThanPath: 'TimestampGreaterThanPath',
+  timestampLessThanEqualsPath: 'TimestampLessThanEqualsPath',
+  timestampGreaterThanEqualsPath: 'TimestampGreaterThanEqualsPath',
 };
 
 function resolveVariable(v: ChoiceVariable): string {
@@ -106,7 +157,12 @@ export function serializeCondition(
 
   for (const [camel, pascal] of Object.entries(CONDITION_KEY_MAP)) {
     if (camel in condition) {
-      result[pascal] = (condition as Record<string, unknown>)[camel];
+      const operand = (condition as Record<string, unknown>)[camel];
+      // `*Path` operands are refs (or raw paths) — serialize the path,
+      // not the ref object.
+      result[pascal] = camel.endsWith('Path')
+        ? resolveVariable(operand as ChoiceVariable)
+        : operand;
       break;
     }
   }

@@ -254,4 +254,28 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
     const _check: IsWholeVideo = true;
     expect(_check).toBe(true);
   });
+
+  // ── *Path operators: comparing two values from the state data ────────
+
+  it('*Path operators compare a variable against another typed ref', () => {
+    type Input = { produced: number; expected: number };
+    const ctx = createProxy<Input>();
+
+    // The non-Path operators compare against a literal; the Path variants
+    // compare against another value in the state data. Both sides are
+    // typed refs, and they must agree: numericLessThanPath wants
+    // Ref<number> — pointing it at a string field will not compile.
+    const condition: ChoiceCondition = {
+      variable: ctx.produced,
+      numericLessThanPath: ctx.expected,
+    };
+
+    expect(serializeCondition(condition)).toEqual({
+      Variable: '$.produced',
+      NumericLessThanPath: '$.expected',
+    });
+
+    // Every comparison operator has a Path variant except stringMatches —
+    // the ASL spec defines no StringMatchesPath.
+  });
 });

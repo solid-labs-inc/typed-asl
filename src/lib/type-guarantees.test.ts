@@ -133,10 +133,65 @@ describe('type guarantees (negative cases)', () => {
         ok: ctx.fanOut[0].left.resultId,
         // @ts-expect-error — branch 1 has no `left` state, only `right`
         crossBranch: ctx.fanOut[1].left,
-        // Known gap: an out-of-range index like ctx.fanOut[2] is NOT
-        // rejected — the `Ref<T> &` intersection in Proxied defeats tuple
-        // bounds checking. Tracked in docs/plan.md.
+        // @ts-expect-error — the tuple has two branches, there is no index 2
+        outOfRange: ctx.fanOut[2],
       }));
+  });
+
+  it('rejects cross-branch access with factory-form parallel branches', () => {
+    new SequenceBuilder<Ctx>()
+      .parallel('fanOut', [
+        (b) =>
+          b.task('left', config, (ctx) => ({
+            step: 'do-thing' as const,
+            bucket: ctx.bucket,
+            count: ctx.size,
+          })),
+        (b) =>
+          b.task('right', config, (ctx) => ({
+            step: 'do-thing' as const,
+            bucket: ctx.bucket,
+            count: ctx.size,
+          })),
+      ])
+      .pass('after', (ctx) => ({
+        ok: ctx.fanOut[1].right.resultId,
+        // @ts-expect-error — per-index inference must not degrade to a
+        // union: branch 1 has no `left` state
+        crossBranch: ctx.fanOut[1].left,
+      }));
+  });
+
+  it('rejects a *Path choice operand whose ref type disagrees with the operator', () => {
+    new SequenceBuilder<Ctx>().choice('check', (ctx) => ({
+      choices: [
+        {
+          // @ts-expect-error — numericLessThanPath wants Ref<number>,
+          // ctx.key is Ref<string>
+          when: { variable: ctx.size, numericLessThanPath: ctx.key },
+          then: (b) => b,
+        },
+      ],
+    }));
+  });
+
+  it('rejects an auto-generated ResultSelector over an optional output field', () => {
+    const OptionalOutput = z.object({
+      resultId: z.string(),
+      maybe: z.string().optional(),
+    });
+    // Static payload values: the config error un-types the callback's
+    // ctx, and this case is about the output schema only.
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'doThing',
+        // @ts-expect-error — optional output fields require an explicit
+        // resultSelector (the auto-generated one errors at runtime on
+        // absent keys)
+        { ...config, outputSchema: OptionalOutput },
+        () => ({ step: 'do-thing' as const, bucket: 'b', count: 1 }),
+      ),
+    ).toThrow('optional');
   });
 
   it('rejects a choice operand whose type does not match the operator', () => {

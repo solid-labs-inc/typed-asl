@@ -9,6 +9,7 @@ import type {
   ExactPayload,
   Proxied,
   Ref,
+  RequireResultSelectorForOptionalOutputs,
   TypedPayloadMapping,
 } from './types.js';
 
@@ -51,10 +52,25 @@ export const EXTERNAL_API_RETRY: RetryConfig[] = [
 
 // ── Config types ────────────────────────────────────────────────────
 
+/**
+ * State-level timeout options shared by `task` and `customTask`.
+ *
+ * `timeoutSeconds`/`heartbeatSeconds` take a static number; the `...Path`
+ * variants read the value from the state data at execution time. Each
+ * pair is mutually exclusive (enforced at build time — ASL rejects a
+ * state carrying both).
+ */
+export interface TimeoutConfig {
+  timeoutSeconds?: number;
+  timeoutSecondsPath?: Ref<number>;
+  heartbeatSeconds?: number;
+  heartbeatSecondsPath?: Ref<number>;
+}
+
 export interface LambdaTaskConfig<
   I extends AnyZodObject,
   O extends AnyZodObject,
-> {
+> extends TimeoutConfig {
   inputSchema: I;
   outputSchema: O;
   functionArn: string;
@@ -97,8 +113,20 @@ export type InferContext<B extends SequenceBuilder<any>> =
   B extends SequenceBuilder<infer Ctx> ? Ctx : never;
 
 /**
- * Given a tuple of SequenceBuilders, produce a tuple of their
- * "delta" outputs — keys each branch added beyond the shared Base context.
+ * A single `parallel` branch: either a prebuilt builder, or a factory
+ * that receives a fresh builder seeded with the current context — like
+ * `choice` branches. The factory form keeps branch contexts in sync with
+ * the chain automatically instead of repeating `new SequenceBuilder<Ctx>()`.
+ */
+export type BranchInput<Ctx> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | SequenceBuilder<any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ((b: SequenceBuilder<Ctx>) => SequenceBuilder<any>);
+
+/**
+ * Given a tuple of branches (builders or factories — see `BranchInput`),
+ * produce a tuple of their output contexts.
  *
  * Uses TypeScript's mapped tuple handling: when `Branches` is a tuple,
  * `{ [I in keyof Branches]: ... }` produces a tuple, not a numeric-keyed object.
@@ -110,18 +138,22 @@ export type InferContext<B extends SequenceBuilder<any>> =
  *   [SequenceBuilder<{ bucket: string } & { frames: FrameOut }>,
  *    SequenceBuilder<{ bucket: string } & { preview: PreviewOut }>]
  * >;
- * // = [{ frames: FrameOut }, { preview: PreviewOut }]
+ * // = [{ bucket: string; frames: FrameOut }, { bucket: string; preview: PreviewOut }]
  * ```
  */
 export type BranchOutputTuple<
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _Base,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Branches extends readonly SequenceBuilder<any>[],
+  // Constrained loosely: `readonly BranchInput<X>[]` runs into function-
+  // parameter contravariance when X varies; the mapped type below handles
+  // both branch forms explicitly anyway.
+  Branches extends readonly unknown[],
 > = {
   [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
     ? Full
-    : never;
+    : Branches[I] extends (b: never) => SequenceBuilder<infer Full>
+      ? Full
+      : never;
 };
 
 /**
@@ -173,7 +205,10 @@ export interface MapConfig<
 /**
  * Configuration for a custom (non-Lambda) Task state.
  */
-export interface CustomTaskConfig<Ctx, CatchKey extends string = never> {
+export interface CustomTaskConfig<
+  Ctx,
+  CatchKey extends string = never,
+> extends TimeoutConfig {
   /** The task resource ARN (e.g. `'arn:aws:states:::batch:submitJob'`). */
   resource: string;
   /**
@@ -186,6 +221,16 @@ export interface CustomTaskConfig<Ctx, CatchKey extends string = never> {
   retry?: RetryConfig[];
   catch?: CatchConfig<Ctx, CatchKey>[];
 }
+
+/**
+ * Configuration for a Wait state: exactly one of a static duration, a
+ * static RFC3339 timestamp, or a typed ref to either in the state data.
+ */
+export type WaitConfig =
+  | { seconds: number }
+  | { timestamp: string }
+  | { secondsPath: Ref<number> }
+  | { timestampPath: Ref<string> };
 
 // ── Catch types ─────────────────────────────────────────────────────
 
@@ -406,7 +451,7 @@ export class SequenceBuilder<Ctx> {
     config: LambdaTaskConfig<I, O> & {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
-    },
+    } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<z.infer<O>>;
 
@@ -446,7 +491,7 @@ export class SequenceBuilder<Ctx> {
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       catch?: CatchConfig<Ctx, CatchKey>[];
-    },
+    } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
 
@@ -472,7 +517,7 @@ export class SequenceBuilder<Ctx> {
       const mapped = config.resultSelector(outputProxy);
       resultSelector = serializeParameters(mapped);
     } else {
-      resultSelector = buildResultSelector(config.outputSchema);
+      resultSelector = buildResultSelector(name, config.outputSchema);
     }
 
     const state: Record<string, unknown> = {
@@ -488,6 +533,8 @@ export class SequenceBuilder<Ctx> {
     if (config.resultPath !== null) {
       state['ResultPath'] = `$.${name}`;
     }
+
+    applyTimeouts(name, state, config);
 
     if (config.retry) {
       state['Retry'] = config.retry;
@@ -541,8 +588,7 @@ export class SequenceBuilder<Ctx> {
    */
   parallel<
     Name extends string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Branches extends readonly SequenceBuilder<any>[],
+    Branches extends readonly BranchInput<Ctx>[],
     CatchKey extends string = never,
   >(
     name: Name,
@@ -552,13 +598,14 @@ export class SequenceBuilder<Ctx> {
 
   parallel(
     name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    branches: SequenceBuilder<any>[],
+    branches: BranchInput<Ctx>[],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     options?: { retry?: RetryConfig[]; catch?: CatchConfig<any, any>[] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
-    const aslBranches = branches.map((b) => b.build());
+    const aslBranches = branches.map((b) =>
+      (typeof b === 'function' ? b(new SequenceBuilder<Ctx>()) : b).build(),
+    );
 
     const state: Record<string, unknown> = {
       Type: 'Parallel',
@@ -669,6 +716,60 @@ export class SequenceBuilder<Ctx> {
     }
 
     return this.append(name, state);
+  }
+
+  /**
+   * Append a Wait state to the sequence.
+   *
+   * Pauses execution for a fixed duration, until a fixed timestamp, or
+   * for a duration/until a timestamp read from the state data. Exactly
+   * one of the four options must be provided; the context type is
+   * unchanged (a Wait state doesn't touch the data).
+   *
+   * For the `...Path` variants, use the callback form to get a typed
+   * context proxy, like `task` payload callbacks.
+   *
+   * @example
+   * ```ts
+   * builder.wait('cooldown', { seconds: 30 })
+   * builder.wait('untilReady', (ctx) => ({ timestampPath: ctx.job.notBefore }))
+   * ```
+   */
+  wait(
+    name: string,
+    config: WaitConfig | ((ctx: Proxied<Ctx>) => WaitConfig),
+  ): SequenceBuilder<Ctx> {
+    const resolved =
+      typeof config === 'function' ? config(createProxy<Ctx>()) : config;
+    const c = resolved as {
+      seconds?: number;
+      timestamp?: string;
+      secondsPath?: Ref<number>;
+      timestampPath?: Ref<string>;
+    };
+    const provided = [
+      c.seconds,
+      c.timestamp,
+      c.secondsPath,
+      c.timestampPath,
+    ].filter((v) => v !== undefined);
+    if (provided.length !== 1) {
+      throw new Error(
+        `Wait state "${name}" needs exactly one of seconds, timestamp, secondsPath, timestampPath — got ${provided.length}`,
+      );
+    }
+
+    const state: Record<string, unknown> = { Type: 'Wait' };
+    if (c.seconds !== undefined) state['Seconds'] = c.seconds;
+    if (c.timestamp !== undefined) state['Timestamp'] = c.timestamp;
+    if (c.secondsPath !== undefined) {
+      state['SecondsPath'] = pathOf(c.secondsPath);
+    }
+    if (c.timestampPath !== undefined) {
+      state['TimestampPath'] = pathOf(c.timestampPath);
+    }
+
+    return this.append<Ctx>(name, state);
   }
 
   /**
@@ -833,6 +934,8 @@ export class SequenceBuilder<Ctx> {
     if (config.resultPath !== undefined) {
       state['ResultPath'] = config.resultPath;
     }
+
+    applyTimeouts(name, state, config);
 
     if (config.retry) {
       state['Retry'] = config.retry;
@@ -1238,6 +1341,40 @@ function serializeItem(item: unknown): unknown {
  * - Skips `undefined` values (optional schema fields can be omitted)
  */
 /**
+ * Serialize `TimeoutConfig` options onto a Task state, enforcing that the
+ * static and `...Path` variants of each option are mutually exclusive —
+ * ASL rejects a state carrying both.
+ */
+function applyTimeouts(
+  name: string,
+  state: Record<string, unknown>,
+  config: TimeoutConfig,
+): void {
+  if (config.timeoutSeconds !== undefined && config.timeoutSecondsPath) {
+    throw new Error(
+      `Task "${name}" has both timeoutSeconds and timeoutSecondsPath — they are mutually exclusive`,
+    );
+  }
+  if (config.heartbeatSeconds !== undefined && config.heartbeatSecondsPath) {
+    throw new Error(
+      `Task "${name}" has both heartbeatSeconds and heartbeatSecondsPath — they are mutually exclusive`,
+    );
+  }
+  if (config.timeoutSeconds !== undefined) {
+    state['TimeoutSeconds'] = config.timeoutSeconds;
+  }
+  if (config.timeoutSecondsPath) {
+    state['TimeoutSecondsPath'] = pathOf(config.timeoutSecondsPath);
+  }
+  if (config.heartbeatSeconds !== undefined) {
+    state['HeartbeatSeconds'] = config.heartbeatSeconds;
+  }
+  if (config.heartbeatSecondsPath) {
+    state['HeartbeatSecondsPath'] = pathOf(config.heartbeatSecondsPath);
+  }
+}
+
+/**
  * The shape of a Zod 4 schema's `def`, restricted to the slice this
  * module inspects. Kept structural so we don't depend on Zod's internal
  * class hierarchy.
@@ -1365,13 +1502,29 @@ function buildAslPayload(
  *
  * Produces `{ "key.$": "$.Payload.key" }` for every key in the schema.
  *
- * Caveat: ASL errors at runtime when a referenced key is absent from the
- * payload, so a schema with `.optional()` fields the Lambda may omit needs
- * an explicit `resultSelector` instead of this auto-generated one.
+ * A schema with `.optional()` fields is rejected: the generated selector
+ * references every key, and ASL errors at runtime when a referenced key
+ * is absent. Such schemas must pass an explicit `resultSelector` (also
+ * enforced at compile time by `RequireResultSelectorForOptionalOutputs`).
  */
 function buildResultSelector(
+  stateName: string,
   outputSchema: AnyZodObject,
 ): Record<string, string> {
+  const optionalKeys = Object.entries(
+    outputSchema.shape as Record<string, unknown>,
+  )
+    .filter(
+      ([, field]) =>
+        (field as { def?: { type?: string } }).def?.type === 'optional',
+    )
+    .map(([key]) => key);
+  if (optionalKeys.length > 0) {
+    throw new Error(
+      `Task "${stateName}": output schema field(s) ${optionalKeys.join(', ')} are optional, but the auto-generated ResultSelector references every key and ASL errors at runtime when one is absent. Pass an explicit resultSelector that only selects fields the Lambda always returns.`,
+    );
+  }
+
   const selector: Record<string, string> = {};
   for (const key of Object.keys(outputSchema.shape)) {
     selector[`${key}.$`] = `$.Payload.${key}`;
