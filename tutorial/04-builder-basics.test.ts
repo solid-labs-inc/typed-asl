@@ -3,8 +3,9 @@
  *
  * The `SequenceBuilder` is the core API. Each `.task()` call does two things:
  *
- *   1. **Runtime:** Records an ASL state definition in an internal array.
- *   2. **Compile time:** Returns the builder cast to a *wider* context type
+ *   1. **Runtime:** Returns a *new* builder with the ASL state definition
+ *      appended — the original builder is never mutated.
+ *   2. **Compile time:** The new builder has a *wider* context type
  *      that includes the new task's output.
  *
  * So after `.task('runMediaInfo', ...)`, the context type grows from
@@ -253,5 +254,67 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
     const state = asl.States.LoadFile as Record<string, any>;
     expect(state.Retry).toBeDefined();
     expect(state.Retry[0].ErrorEquals).toContain('ThrottlingException');
+  });
+
+  // ── Builders are immutable ───────────────────────────────────────────
+
+  it('appending never mutates — a shared prefix can fork safely', () => {
+    type Input = { bucket: string; key: string };
+
+    // A common prefix, defined once...
+    const base = new SequenceBuilder<Input>().task(
+      'loadFile',
+      {
+        inputSchema: LoadFileInput,
+        outputSchema: LoadFileOutput,
+        functionArn: LAMBDA_ARN,
+      },
+      (ctx) => ({
+        step: 'load-file' as const,
+        bucket: ctx.bucket,
+        key: ctx.key,
+      }),
+    );
+
+    // ...can fork into two independent machines. Each .task() returns a
+    // new builder, so neither fork sees the other's states — and `base`
+    // itself is unchanged.
+    const analyzed = base.task(
+      'analyze',
+      {
+        inputSchema: AnalyzeInput,
+        outputSchema: AnalyzeOutput,
+        functionArn: LAMBDA_ARN,
+      },
+      (ctx) => ({
+        step: 'analyze' as const,
+        fileId: ctx.loadFile.fileUpload.id,
+        filename: ctx.loadFile.fileUpload.filename,
+      }),
+    );
+    const skipped = base.succeed('skipAnalysis');
+
+    expect(Object.keys(base.build().States)).toEqual(['LoadFile']);
+    expect(Object.keys(analyzed.build().States)).toEqual([
+      'LoadFile',
+      'Analyze',
+    ]);
+    expect(Object.keys(skipped.build().States)).toEqual([
+      'LoadFile',
+      'SkipAnalysis',
+    ]);
+  });
+
+  // ── Duplicate state names are rejected ───────────────────────────────
+
+  it('build() throws on duplicate state names', () => {
+    // ASL keys states by name, so a duplicate would silently overwrite
+    // the earlier state. build() catches this — including names that
+    // collide only after capitalization ('run' and 'Run' both become 'Run').
+    const builder = new SequenceBuilder<{ bucket: string; key: string }>()
+      .succeed('done')
+      .succeed('Done');
+
+    expect(() => builder.build()).toThrow('Duplicate state name "Done"');
   });
 });

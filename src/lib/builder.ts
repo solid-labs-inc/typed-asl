@@ -300,6 +300,20 @@ export class SequenceBuilder<Ctx> {
   }
 
   /**
+   * @internal Copy-on-append: returns a fresh builder with the new state
+   * appended, leaving this builder untouched. This is what makes builders
+   * safe to reuse as shared prefixes (e.g. across parallel branches).
+   */
+  private append<NewCtx>(
+    name: string,
+    state: Record<string, unknown>,
+  ): SequenceBuilder<NewCtx> {
+    const next = new SequenceBuilder<NewCtx>();
+    next._states = [...this._states, [name, state]];
+    return next;
+  }
+
+  /**
    * Apply a transform function to this builder, enabling reusable task
    * definitions while keeping a flat chain.
    *
@@ -442,10 +456,7 @@ export class SequenceBuilder<Ctx> {
       state['Retry'] = config.retry;
     }
 
-    this._states.push([name, state]);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this as unknown as SequenceBuilder<any>;
+    return this.append(name, state);
   }
 
   /**
@@ -511,10 +522,7 @@ export class SequenceBuilder<Ctx> {
         catchEntries;
     }
 
-    this._states.push([name, state]);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this as unknown as SequenceBuilder<any>;
+    return this.append(name, state);
   }
 
   /**
@@ -589,8 +597,7 @@ export class SequenceBuilder<Ctx> {
         Result: mappingFnOrConfig.result,
         ResultPath: mappingFnOrConfig.resultPath,
       };
-      this._states.push([name, state]);
-      return this;
+      return this.append(name, state);
     }
 
     // Overload 1: mapping function
@@ -608,8 +615,7 @@ export class SequenceBuilder<Ctx> {
       state['ResultPath'] = `$.${name}`;
     }
 
-    this._states.push([name, state]);
-    return this;
+    return this.append(name, state);
   }
 
   /**
@@ -710,10 +716,7 @@ export class SequenceBuilder<Ctx> {
       state['MaxConcurrency'] = config.maxConcurrency;
     }
 
-    this._states.push([name, state]);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this as unknown as SequenceBuilder<any>;
+    return this.append(name, state);
   }
 
   /**
@@ -766,9 +769,7 @@ export class SequenceBuilder<Ctx> {
       state['Retry'] = config.retry;
     }
 
-    this._states.push([name, state]);
-
-    return this as unknown as SequenceBuilder<Ctx & Record<Name, O>>;
+    return this.append<Ctx & Record<Name, O>>(name, state);
   }
 
   /**
@@ -844,9 +845,7 @@ export class SequenceBuilder<Ctx> {
 
     // Store as a special marker entry
     const state: Record<string, unknown> = { [CHOICE_MARKER]: block };
-    this._states.push([name, state]);
-
-    return this;
+    return this.append(name, state);
   }
 
   /**
@@ -874,8 +873,7 @@ export class SequenceBuilder<Ctx> {
     if (config.error !== undefined) state['Error'] = config.error;
     if (config.cause !== undefined) state['Cause'] = config.cause;
 
-    this._states.push([name, state]);
-    return this;
+    return this.append<Ctx>(name, state);
   }
 
   /**
@@ -899,8 +897,7 @@ export class SequenceBuilder<Ctx> {
    * ```
    */
   succeed(name: string): SequenceBuilder<Ctx> {
-    this._states.push([name, { Type: 'Succeed' }]);
-    return this;
+    return this.append<Ctx>(name, { Type: 'Succeed' });
   }
 
   /**
@@ -919,6 +916,15 @@ export class SequenceBuilder<Ctx> {
     }
 
     const states: Record<string, object> = {};
+
+    // States are keyed by their capitalized name, so two states whose names
+    // differ only in first-letter case would silently overwrite each other.
+    const addState = (stateName: string, s: object): void => {
+      if (states[stateName]) {
+        throw new Error(`Duplicate state name "${stateName}"`);
+      }
+      states[stateName] = s;
+    };
 
     for (let i = 0; i < this._states.length; i++) {
       const [name, state] = this._states[i];
@@ -940,7 +946,7 @@ export class SequenceBuilder<Ctx> {
         const getOrCreateEndPass = (): string => {
           if (!endPassStateName) {
             endPassStateName = `${capitalize(name)}End`;
-            states[endPassStateName] = { Type: 'Pass', End: true };
+            addState(endPassStateName, { Type: 'Pass', End: true });
           }
           return endPassStateName;
         };
@@ -1006,13 +1012,13 @@ export class SequenceBuilder<Ctx> {
           choiceState['Default'] = nextStateName ?? getOrCreateEndPass();
         }
 
-        states[capitalize(name)] = choiceState;
+        addState(capitalize(name), choiceState);
         continue;
       }
 
       // ── Terminal states (Fail / Succeed) ────────────────────────
       if (state['Type'] === 'Fail' || state['Type'] === 'Succeed') {
-        states[capitalize(name)] = { ...state };
+        addState(capitalize(name), { ...state });
         continue;
       }
 
@@ -1053,7 +1059,7 @@ export class SequenceBuilder<Ctx> {
         copy['Catch'] = aslCatch;
       }
 
-      states[capitalize(name)] = copy;
+      addState(capitalize(name), copy);
     }
 
     return {
