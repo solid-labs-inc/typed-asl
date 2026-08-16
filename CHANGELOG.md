@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-16
+
 ### Fixed
 
 - Chains no longer hit `TS2589: Type instantiation is excessively deep
@@ -21,7 +23,8 @@ and possibly infinite`. Every context-widening call used to return
   previous mapped type. A 16-state chain drops from ~29.3M
   instantiations (and an error) to ~205k, and 40- and 64-state chains
   type-check where they previously could not exist. Cost on this repo's
-  own suite is +4.8% instantiations with check time flat.
+  own suite is +5.1% instantiations (437,877 → 460,049) with check time
+  flat at ~1.0s.
   ([#14](https://github.com/solid-labs-inc/typed-asl/issues/14))
 
 ### Changed
@@ -40,8 +43,8 @@ and possibly infinite`. Every context-widening call used to return
   rather than the context — silently, since it is not an error. Use the
   exported `InferContext<T>`, which has always been the supported
   spelling, or match `SequenceBuilder<infer C, any, any>`.
-- `StateEntry` and `ContextOf` are exported for code that needs to name
-  the accumulation directly.
+- `AnyBuilder`, `StateEntry` and `ContextOf` are exported for code that
+  needs to name a builder or the accumulation directly.
 - The accumulated context type now hovers as a plain object. Every
   context-widening return (`task`, `pass`, `map`, `parallel`,
   `customTask`, `choice`'s `Adds` overload) is wrapped in a new
@@ -221,7 +224,8 @@ Initial extraction from the Stellar monorepo. Never published to npm.
 - Intrinsics: `statesFormat`, `statesJsonToString`, `statesMathAdd`.
 - Runnable tutorial (`tutorial/00`–`10`) doubling as the documentation.
 
-[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/solid-labs-inc/typed-asl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/solid-labs-inc/typed-asl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/solid-labs-inc/typed-asl/releases/tag/v0.2.0
 [0.1.0]: https://github.com/solid-labs-inc/typed-asl/commit/2649df6
