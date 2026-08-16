@@ -10,6 +10,67 @@ and this project adheres to
 
 ### Added
 
+- `Wait` state: `wait(name, { seconds | timestamp | secondsPath |
+timestampPath })`, with a callback form for typed refs to the context
+  (`wait(name, (ctx) => ({ secondsPath: ctx.delay }))`).
+- `TimeoutSeconds`/`HeartbeatSeconds` on `task` and `customTask`, plus
+  `timeoutSecondsPath`/`heartbeatSecondsPath` taking `Ref<number>`. The
+  static and Path forms of an option are mutually exclusive (build-time
+  error).
+- All 16 `*Path` choice operators. The operand is a typed ref and the
+  variable must agree with it — `numericLessThanPath` wants `Ref<number>`
+  on both sides.
+- `parallel` branches accept factory callbacks
+  (`(b) => b.task(...)`) alongside prebuilt builders, like `choice`
+  branches — the fresh builder is seeded with the current context, and
+  per-index tuple typing is preserved (`BranchInput`, widened
+  `BranchOutputTuple`).
+- The rest of the JSONPath intrinsic set: `statesArrayGetItem`,
+  `statesArrayContains`, `statesArrayRange`, `statesArrayUnique`,
+  `statesArrayPartition`, `statesJsonMerge` (shallow, typed as
+  `Omit<A, keyof B> & B`), `statesMathRandom`, `statesStringSplit`,
+  `statesBase64Encode`/`statesBase64Decode`, `statesHash`.
+- `map` accepts `items: (ctx) => ctx.scenes` — a typed ref selector with
+  code completion — as the preferred alternative to a raw `itemsPath`
+  string; `ItemType` is inferred from the ref.
+- `customTask` accepts an optional `outputSchema`, load-bearing exactly
+  like `task`'s: it generates a `ResultSelector` projecting each schema
+  key from the raw result (`{ "key.$": "$.key" }`) and types the context
+  from `z.infer` — no explicit generics. Optional fields are rejected,
+  same as `task`.
+- Catch handler contexts type the caught error as `AslCatchErrorOutput`
+  (`{ Error, Cause }`) instead of `unknown`, so `ctx.error.Cause` is a
+  `Ref<string>` usable in conditions and payloads.
+- Known ASL and Lambda error names autocomplete in `ErrorEquals`/
+  `errorEquals` (`AslErrorName` — arbitrary custom error strings remain
+  legal).
+
+### Changed
+
+- **Breaking:** an output schema with `.optional()` fields now requires
+  an explicit `resultSelector` — enforced at compile time (the config
+  stops typechecking, with the requirement spelled out in the error) and
+  at build time. The auto-generated selector references every schema key
+  and ASL errors at runtime when one is absent, so this was a
+  latent-failure trap.
+- **Breaking (type-level):** out-of-range tuple indices on parallel
+  results (`ctx.par[2]` on a two-branch parallel) are now compile
+  errors, and proxied refs no longer expose array methods (`ctx.arr.map`
+  would have recorded the JSONPath `$.arr.map`).
+- **Breaking:** `customTask`'s context type now tells the truth. It is
+  keyed by the `resultPath` key (previously by the state name, so with
+  `resultPath: '$.transcodeJob'` the type said `ctx.transcode` while the
+  data lived at `$.transcodeJob` — a dangling ref); with no `resultPath`
+  the result replaces the entire input, and the context type follows.
+  `resultPath` must be a single `$.{key}` (build-time error otherwise),
+  and the `Name`/`O` explicit type parameters are gone — use
+  `outputSchema` to type the result.
+- **Breaking (type-level):** choice conditions check the variable side —
+  `stringEquals` wants a `string`-typed ref (`null`/`undefined`
+  admitted), `numericLessThan` a numeric one, and so on
+  (`ChoiceVariableOf<T>`). Raw JSONPath strings remain the untyped
+  escape hatch; the `is*` type tests still take any variable.
+
 - Every fixture machine in the test suite is now validated against the ASL
   spec with `asl-validator` — a `build()` result that AWS would reject
   fails CI.
@@ -22,6 +83,26 @@ and this project adheres to
 
 ### Fixed
 
+- Context accumulation replaces an overwritten key's type instead of
+  intersecting (`Omit<Ctx, Key> & Record<Key, …>` across all state
+  methods) — previously a second write to the same `resultPath`/state
+  key kept the stale type alive, so refs to overwritten fields compiled.
+  `SequenceBuilder` is now explicitly invariant (`in out Ctx`).
+- Context-keyed `resultPath`s (`customTask`, `pass` literal-result,
+  catch configs) reject nested paths like `'$.a.b'` at compile time
+  (`ResultPathKeyCheck` collapses the property to `never`) and at build
+  time — previously `customTask` only threw and `pass`/catch silently
+  desynced the context type from where the data lands.
+- A choice condition carrying two operator keys (which union
+  assignability can't reject) or none at all now throws at serialization
+  instead of shipping a rule that tests the wrong comparison or invalid
+  ASL.
+- `map` validates its `items`/`itemsPath` configuration before running
+  the selector and processor callbacks, and a non-ref `items` return
+  gets a descriptive error instead of a `pathOf` crash; the exported
+  `MapConfig` type now admits the `items` form.
+- `itemsPath` literal inference (`PathValue`) handles `readonly` arrays
+  instead of resolving the item type to `never`.
 - A payload field not present in the input schema is now rejected — at
   compile time via `ExactPayload`/`NoExtraPayloadKeys` (both exported),
   and at runtime with a descriptive error. Previously an extra (usually

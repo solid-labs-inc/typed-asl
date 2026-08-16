@@ -363,4 +363,101 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
 
     expect(() => builder.build()).toThrow('Duplicate state name "Mark"');
   });
+
+  // ── Wait states ──────────────────────────────────────────────────────
+
+  it('wait() pauses execution without touching the context', () => {
+    type Input = { delaySeconds: number };
+
+    // Four variants, exactly one per state: a static duration, a static
+    // RFC3339 timestamp, or a typed ref to either in the state data.
+    const asl = new SequenceBuilder<Input>()
+      .wait('cooldown', { seconds: 30 })
+      .pass('mark', (ctx) => ({ waited: ctx.delaySeconds }))
+      .build();
+
+    expect(asl.States.Cooldown).toMatchObject({
+      Type: 'Wait',
+      Seconds: 30,
+      Next: 'Mark',
+    });
+
+    // The data-driven variant reads the duration from the context. Use
+    // the callback form to get a typed proxy — secondsPath wants a
+    // Ref<number>, so pointing it at a string field will not compile.
+    const dataDriven = new SequenceBuilder<Input>()
+      .wait('dataDelay', (ctx) => ({ secondsPath: ctx.delaySeconds }))
+      .build();
+    expect(dataDriven.States.DataDelay).toMatchObject({
+      Type: 'Wait',
+      SecondsPath: '$.delaySeconds',
+    });
+  });
+
+  // ── Task timeouts and heartbeats ─────────────────────────────────────
+
+  it('tasks can set timeouts and heartbeats, static or data-driven', () => {
+    const SlowInput = z.object({
+      step: z.literal('slow-thing'),
+      bucket: z.string(),
+    });
+    const SlowOutput = z.object({ done: z.boolean() });
+    type Input = { bucket: string; budgetSeconds: number };
+
+    const asl = new SequenceBuilder<Input>()
+      .task(
+        'slowThing',
+        {
+          inputSchema: SlowInput,
+          outputSchema: SlowOutput,
+          functionArn: '${lambda_arn}',
+          // Fail the state if it runs longer than 15 minutes…
+          timeoutSeconds: 900,
+          // …or misses two consecutive 60s heartbeats.
+          heartbeatSeconds: 60,
+        },
+        (ctx) => ({ step: 'slow-thing' as const, bucket: ctx.bucket }),
+      )
+      .build();
+
+    expect(asl.States.SlowThing).toMatchObject({
+      TimeoutSeconds: 900,
+      HeartbeatSeconds: 60,
+    });
+
+    // The ...Path variants read the value from the state data instead —
+    // timeoutSecondsPath takes a Ref<number>, and the static and Path
+    // forms of the same option are mutually exclusive (build-time error).
+  });
+
+  // ── customTask: non-Lambda resources ─────────────────────────────────
+
+  it('customTask stores its result where resultPath says — and so does the type', () => {
+    type Input = { videoId: string };
+
+    // customTask is the escape hatch for non-Lambda service integrations
+    // (Batch, SNS, SDK integrations, …). The context follows ASL's
+    // ResultPath semantics: with resultPath '$.job' the result is
+    // ctx.job (NOT ctx.<stateName>), and omitting resultPath means the
+    // result replaces the entire input. outputSchema drives the result
+    // exactly like task's: a ResultSelector projects each schema key
+    // from the raw result, so the typed context matches the data.
+    const asl = new SequenceBuilder<Input>()
+      .customTask('submitTranscode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ JobName: ctx.videoId }),
+        resultPath: '$.job',
+        outputSchema: z.object({ JobId: z.string() }),
+      })
+      .pass('report', (ctx) => ({ id: ctx.job.JobId })) // typed: string
+      .build();
+
+    const submit = asl.States.SubmitTranscode as Record<string, unknown>;
+    expect(submit.ResultPath).toBe('$.job');
+    expect(submit.ResultSelector).toEqual({ 'JobId.$': '$.JobId' });
+    expect((asl.States.Report as any).Parameters['id.$']).toBe('$.job.JobId');
+
+    // resultPath must be a single '$.{key}' — the context type is keyed
+    // by it, so a nested path would make refs lie. Enforced at build time.
+  });
 });

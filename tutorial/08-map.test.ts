@@ -217,4 +217,30 @@ describe('Chapter 8: Map — Iteration with Dual Context', () => {
     const finalizePayload = (asl.States.Finalize as any).Parameters.Payload;
     expect(finalizePayload['sceneResults.$']).toBe('$.processScenes');
   });
+
+  // ── items: a typed ref instead of a path string ──────────────────────
+
+  it('items selects the array as a typed ref — preferred over itemsPath', () => {
+    type Scene = { id: string; startFrame: number };
+    type Input = { scenes: Scene[]; bucket: string };
+
+    // `itemsPath: '$.scenes'` works, but you type the path blind. The
+    // `items` form is a callback over the typed context: VS Code
+    // completes `ctx.scenes`, a typo doesn't compile, pointing it at a
+    // non-array doesn't compile, and ItemType is inferred from the ref —
+    // no MapItemRef annotation needed.
+    const asl = new SequenceBuilder<Input>()
+      .map('processScenes', {
+        items: (ctx) => ctx.scenes,
+        itemSelector: (item, ctx) => ({
+          scene: item.value, // typed as Ref<Scene> via inference
+          bucket: ctx.bucket,
+        }),
+        processor: (b) => b.pass('mark', (c) => ({ id: c.scene.id })),
+      })
+      .build();
+
+    const state = asl.States.ProcessScenes as Record<string, unknown>;
+    expect(state.ItemsPath).toBe('$.scenes');
+  });
 });

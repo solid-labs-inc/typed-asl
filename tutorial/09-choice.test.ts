@@ -254,4 +254,34 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
     const _check: IsWholeVideo = true;
     expect(_check).toBe(true);
   });
+
+  // ── *Path operators: comparing two values from the state data ────────
+
+  it('*Path operators compare a variable against another typed ref', () => {
+    type Input = { produced: number; expected: number };
+    const ctx = createProxy<Input>();
+
+    // The non-Path operators compare against a literal; the Path variants
+    // compare against another value in the state data. Both sides are
+    // typed refs, and they must agree: numericLessThanPath wants
+    // Ref<number> — pointing it at a string field will not compile.
+    const condition: ChoiceCondition = {
+      variable: ctx.produced,
+      numericLessThanPath: ctx.expected,
+    };
+
+    expect(serializeCondition(condition)).toEqual({
+      Variable: '$.produced',
+      NumericLessThanPath: '$.expected',
+    });
+
+    // Every comparison operator has a Path variant except stringMatches —
+    // the ASL spec defines no StringMatchesPath.
+
+    // The non-Path operators check the variable side too: stringEquals
+    // wants a string-typed ref (nullable is fine — that's what conditions
+    // inspect), so `{ variable: ctx.count, stringEquals: 'x' }` is a
+    // compile error. A raw JSONPath string stays legal as the escape
+    // hatch. Only the is* type tests accept a variable of any type.
+  });
 });

@@ -158,6 +158,30 @@ settings, currently disabled.
 
 Each item is independently shippable; 0.3.0 cuts when they're all in.
 
+**Status: implemented** (August 2026). Notes:
+
+- `wait()` gained a callback form (`(ctx) => ({ secondsPath: ctx.delay })`)
+  — the config-only design had no way to reach a typed context ref
+  mid-chain.
+- Item 6 (out-of-range parallel indices) fixed via the `Proxied` reshape:
+  the tuple branch is a keyed object (`Extract<keyof T, `${number}`>`)
+  instead of a mapped tuple, which removes the array number-index
+  signature that let `tup[2]` through. Side effect, deliberate: proxied
+  refs no longer expose array methods.
+- Item 7 decided as (b): optional output fields are a compile error
+  without an explicit `resultSelector` (plus a build-time throw), shipped
+  as the 0.3.0 breaking change.
+- A type-tightening review pass rode along ("are we trying hard enough to
+  use the type system?"): `customTask`'s context is now keyed by
+  `resultPath` instead of the state name (the old typing was a lie — refs
+  pointed where no data lived) with an `outputSchema` typing hint
+  replacing explicit generics; `map` gained a typed `items` ref selector
+  (completion, typos don't compile); choice conditions type the variable
+  side (`ChoiceVariableOf<T>`); known ASL/Lambda error names autocomplete
+  in retry/catch (`AslErrorName`); `BranchOutputTuple`'s constraint was
+  restored to a precise one via `(b: never) => …` (contravariance makes
+  it accept every factory).
+
 1. **`Wait` state** (S). `wait(name, { seconds | timestamp |
 secondsPath: Ref<number> | timestampPath: Ref<string> })` — context type
    unchanged.

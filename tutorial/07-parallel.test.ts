@@ -262,4 +262,42 @@ describe('Chapter 7: Parallel — Tuple Typing', () => {
     // The catch handler is inlined as a sibling state
     expect(asl.States.HandleError).toBeDefined();
   });
+
+  // ── Factory branches ─────────────────────────────────────────────────
+
+  it('branches can be factory callbacks instead of prebuilt builders', () => {
+    type Input = { bucket: string; key: string };
+
+    // Instead of repeating `new SequenceBuilder<Input>()` per branch, pass
+    // a callback — it receives a fresh builder already seeded with the
+    // current context, exactly like `choice` branches. If an upstream
+    // task changes the context type, the branches follow automatically.
+    const asl = new SequenceBuilder<Input>()
+      .parallel('process', [
+        (b) =>
+          b.task(
+            'extractFrames',
+            {
+              inputSchema: ExtractFramesInput,
+              outputSchema: ExtractFramesOutput,
+              functionArn: '${lambda_arn}',
+            },
+            (ctx) => ({
+              step: 'extract-frames' as const,
+              bucket: ctx.bucket,
+              key: ctx.key,
+            }),
+          ),
+        // Both forms mix freely in one call.
+        new SequenceBuilder<Input>().pass('mark', () => ({ marked: true })),
+      ])
+      .build();
+
+    const parallel = asl.States.Process as { Branches: unknown[] };
+    expect(parallel.Branches).toHaveLength(2);
+
+    // Per-index typing works the same as with prebuilt builders:
+    // ctx.process[0].extractFrames is branch 0's output, and accessing a
+    // state from the wrong branch is a compile error.
+  });
 });

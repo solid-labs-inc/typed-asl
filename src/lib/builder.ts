@@ -9,13 +9,49 @@ import type {
   ExactPayload,
   Proxied,
   Ref,
+  RequireNoOptionalOutputs,
+  RequireResultSelectorForOptionalOutputs,
   TypedPayloadMapping,
 } from './types.js';
 
 // ── Retry presets ───────────────────────────────────────────────────
 
+/**
+ * Error names predefined by the ASL spec, plus the Lambda service errors
+ * that show up in real Retry/Catch configs.
+ */
+export type KnownAslError =
+  | 'States.ALL'
+  | 'States.BranchFailed'
+  | 'States.DataLimitExceeded'
+  | 'States.ExceedToleratedFailureThreshold'
+  | 'States.HeartbeatTimeout'
+  | 'States.IntrinsicFailure'
+  | 'States.ItemReaderFailed'
+  | 'States.NoChoiceMatched'
+  | 'States.ParameterPathFailure'
+  | 'States.Permissions'
+  | 'States.ResultPathMatchFailure'
+  | 'States.ResultWriterFailed'
+  | 'States.Runtime'
+  | 'States.TaskFailed'
+  | 'States.Timeout'
+  | 'Lambda.AWSLambdaException'
+  | 'Lambda.ClientExecutionTimeoutException'
+  | 'Lambda.SdkClientException'
+  | 'Lambda.ServiceException'
+  | 'Lambda.TooManyRequestsException';
+
+/**
+ * An error name for `ErrorEquals`: the known names autocomplete, and any
+ * custom error string (your Lambda's own error types) stays legal — the
+ * `& Record<never, never>` keeps the union from collapsing to `string`,
+ * which would kill completion.
+ */
+export type AslErrorName = KnownAslError | (string & Record<never, never>);
+
 export interface RetryConfig {
-  ErrorEquals: string[];
+  ErrorEquals: AslErrorName[];
   IntervalSeconds: number;
   BackoffRate: number;
   MaxAttempts: number;
@@ -51,10 +87,25 @@ export const EXTERNAL_API_RETRY: RetryConfig[] = [
 
 // ── Config types ────────────────────────────────────────────────────
 
+/**
+ * State-level timeout options shared by `task` and `customTask`.
+ *
+ * `timeoutSeconds`/`heartbeatSeconds` take a static number; the `...Path`
+ * variants read the value from the state data at execution time. Each
+ * pair is mutually exclusive (enforced at build time — ASL rejects a
+ * state carrying both).
+ */
+export interface TimeoutConfig {
+  timeoutSeconds?: number;
+  timeoutSecondsPath?: Ref<number>;
+  heartbeatSeconds?: number;
+  heartbeatSecondsPath?: Ref<number>;
+}
+
 export interface LambdaTaskConfig<
   I extends AnyZodObject,
   O extends AnyZodObject,
-> {
+> extends TimeoutConfig {
   inputSchema: I;
   outputSchema: O;
   functionArn: string;
@@ -97,8 +148,20 @@ export type InferContext<B extends SequenceBuilder<any>> =
   B extends SequenceBuilder<infer Ctx> ? Ctx : never;
 
 /**
- * Given a tuple of SequenceBuilders, produce a tuple of their
- * "delta" outputs — keys each branch added beyond the shared Base context.
+ * A single `parallel` branch: either a prebuilt builder, or a factory
+ * that receives a fresh builder seeded with the current context — like
+ * `choice` branches. The factory form keeps branch contexts in sync with
+ * the chain automatically instead of repeating `new SequenceBuilder<Ctx>()`.
+ */
+export type BranchInput<Ctx> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | SequenceBuilder<any>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | ((b: SequenceBuilder<Ctx>) => SequenceBuilder<any>);
+
+/**
+ * Given a tuple of branches (builders or factories — see `BranchInput`),
+ * produce a tuple of their output contexts.
  *
  * Uses TypeScript's mapped tuple handling: when `Branches` is a tuple,
  * `{ [I in keyof Branches]: ... }` produces a tuple, not a numeric-keyed object.
@@ -110,18 +173,27 @@ export type InferContext<B extends SequenceBuilder<any>> =
  *   [SequenceBuilder<{ bucket: string } & { frames: FrameOut }>,
  *    SequenceBuilder<{ bucket: string } & { preview: PreviewOut }>]
  * >;
- * // = [{ frames: FrameOut }, { preview: PreviewOut }]
+ * // = [{ bucket: string; frames: FrameOut }, { bucket: string; preview: PreviewOut }]
  * ```
  */
 export type BranchOutputTuple<
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _Base,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Branches extends readonly SequenceBuilder<any>[],
+  // `readonly BranchInput<X>[]` would trip function-parameter
+  // contravariance when X varies, but `(b: never) => ...` accepts every
+  // factory for the same reason — so the constraint stays precise.
+  Branches extends readonly (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | SequenceBuilder<any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | ((b: never) => SequenceBuilder<any>)
+  )[],
 > = {
   [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
     ? Full
-    : never;
+    : Branches[I] extends (b: never) => SequenceBuilder<infer Full>
+      ? Full
+      : never;
 };
 
 /**
@@ -139,8 +211,15 @@ export interface MapConfig<
   ProcessorCtx,
   CatchKey extends string = never,
 > {
-  /** JSONPath to the array to iterate (e.g. `'$.scenes'`). */
-  itemsPath: string;
+  /**
+   * JSONPath to the array to iterate (e.g. `'$.scenes'`). Prefer `items`
+   * — it autocompletes and typos don't compile; a literal path here is
+   * type-checked against the context but without completion. Exactly one
+   * of `itemsPath`/`items` is required (enforced at build time).
+   */
+  itemsPath?: string;
+  /** Typed ref selector for the array to iterate — preferred. */
+  items?: (ctx: Proxied<Ctx>) => Ref<readonly ItemType[]>;
   /** Max concurrent iterations (default: unlimited). */
   maxConcurrency?: number;
   retry?: RetryConfig[];
@@ -173,7 +252,10 @@ export interface MapConfig<
 /**
  * Configuration for a custom (non-Lambda) Task state.
  */
-export interface CustomTaskConfig<Ctx, CatchKey extends string = never> {
+export interface CustomTaskConfig<
+  Ctx,
+  CatchKey extends string = never,
+> extends TimeoutConfig {
   /** The task resource ARN (e.g. `'arn:aws:states:::batch:submitJob'`). */
   resource: string;
   /**
@@ -181,11 +263,34 @@ export interface CustomTaskConfig<Ctx, CatchKey extends string = never> {
    * Supports refs and intrinsic functions at any nesting depth.
    */
   parameters: (ctx: Proxied<Ctx>) => Record<string, unknown>;
-  /** Where to store the result (e.g. `'$.transcodeJob'`). Omit to replace input. */
+  /**
+   * Where to store the result, as `$.{key}` — the context type is keyed
+   * by `key`. Omit to have the result replace the entire state input
+   * (ASL's default), which the context type also reflects.
+   */
   resultPath?: string;
+  /**
+   * Drives the result exactly like `task`'s output schema: a
+   * `ResultSelector` is generated projecting each schema key from the
+   * raw result (`{ "key.$": "$.key" }`), and the context is typed as
+   * `z.infer` of it. Optional fields are rejected — the selector
+   * references every key and ASL errors at runtime on absent ones. Omit
+   * for the raw, untyped result.
+   */
+  outputSchema?: AnyZodObject;
   retry?: RetryConfig[];
   catch?: CatchConfig<Ctx, CatchKey>[];
 }
+
+/**
+ * Configuration for a Wait state: exactly one of a static duration, a
+ * static RFC3339 timestamp, or a typed ref to either in the state data.
+ */
+export type WaitConfig =
+  | { seconds: number }
+  | { timestamp: string }
+  | { secondsPath: Ref<number> }
+  | { timestampPath: Ref<string> };
 
 // ── Catch types ─────────────────────────────────────────────────────
 
@@ -199,18 +304,65 @@ const CATCH_HANDLERS: unique symbol = Symbol('catchHandlers');
 const STATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
+ * A context-keyed `resultPath` must be `$.{identifier}` — the context
+ * type is keyed by that identifier, so a nested or exotic path would
+ * desynchronize types from the runtime data location.
+ */
+const RESULT_PATH = /^\$\.[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Compile-time companion to {@link RESULT_PATH}, intersected into every
+ * context-keyed `resultPath` property (`customTask`, `pass`, catch
+ * configs): when the inferred key contains a `.` or `[`, the property
+ * type collapses to `never`, so `resultPath: '$.a.b'` is a compile error
+ * anchored on the property. Nested ResultPaths are deliberately
+ * unrepresentable — the context type could not describe where the data
+ * lives.
+ */
+export type ResultPathKeyCheck<Key extends string> = Key extends
+  `${string}.${string}` | `${string}[${string}`
+  ? never
+  : `$.${Key}`;
+
+/**
+ * Runtime companion for plain-JS callers: same rule as
+ * {@link ResultPathKeyCheck}.
+ */
+function assertResultPathKey(
+  where: string,
+  resultPath: string | undefined,
+): void {
+  if (resultPath !== undefined && !RESULT_PATH.test(resultPath)) {
+    throw new Error(
+      `${where}: resultPath "${resultPath}" must be "$.{key}" with a single identifier key — the context type is keyed by it, so a nested or exotic path would make downstream refs point at data that isn't there.`,
+    );
+  }
+}
+
+/**
+ * The error object ASL places at a Catch's `ResultPath`: the error name
+ * and a Cause string (for Lambda failures, a JSON-serialized stack).
+ */
+export interface AslCatchErrorOutput {
+  Error: string;
+  Cause: string;
+}
+
+/**
  * Configuration for a Catch block on a Parallel or Task state.
  *
  * @typeParam Ctx - The current builder context.
  * @typeParam Key - The key extracted from `resultPath` (e.g. `'error'` from `'$.error'`).
- *   When provided, the handler context is extended with `Record<Key, unknown>`.
+ *   When provided, the handler context is extended with the caught error
+ *   at that key, typed as {@link AslCatchErrorOutput} — so
+ *   `ctx.error.Cause` is a `Ref<string>` usable in choice conditions.
  */
 export interface CatchConfig<Ctx, Key extends string = never> {
-  errorEquals: string[];
-  resultPath?: `$.${Key}`;
+  errorEquals: AslErrorName[];
+  resultPath?: `$.${Key}` & ResultPathKeyCheck<Key>;
 
   handler: (
-    b: SequenceBuilder<Ctx & Record<Key, unknown>>,
+    b: SequenceBuilder<Ctx & Record<Key, AslCatchErrorOutput>>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) => SequenceBuilder<any>;
 }
@@ -292,7 +444,12 @@ interface ChoiceBlock {
  *   .build();
  * ```
  */
-export class SequenceBuilder<Ctx> {
+// `in out`: the context is consumed (payload callbacks) and produced
+// (the `_ctx` phantom), so the class is invariant — declared explicitly
+// because the `Omit<Ctx, Key>` method returns put `keyof Ctx` on the
+// surface, which defeats structural variance measurement and would
+// otherwise break even `SequenceBuilder<Ctx>` → `SequenceBuilder<any>`.
+export class SequenceBuilder<in out Ctx> {
   /** @internal Type-level only — does not exist at runtime. */
   declare readonly _ctx: Ctx;
 
@@ -406,7 +563,7 @@ export class SequenceBuilder<Ctx> {
     config: LambdaTaskConfig<I, O> & {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
-    },
+    } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<z.infer<O>>;
 
@@ -430,7 +587,7 @@ export class SequenceBuilder<Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<R>>>;
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, UnwrapRefs<R>>>;
 
   /**
    * Overload: without `resultSelector` — auto-generates a 1:1 mapping from
@@ -446,9 +603,9 @@ export class SequenceBuilder<Ctx> {
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       catch?: CatchConfig<Ctx, CatchKey>[];
-    },
+    } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, z.infer<O>>>;
 
   task(
     name: string,
@@ -472,7 +629,12 @@ export class SequenceBuilder<Ctx> {
       const mapped = config.resultSelector(outputProxy);
       resultSelector = serializeParameters(mapped);
     } else {
-      resultSelector = buildResultSelector(config.outputSchema);
+      resultSelector = buildResultSelector(
+        name,
+        config.outputSchema,
+        '$.Payload',
+        'Pass an explicit resultSelector that only selects fields the Lambda always returns.',
+      );
     }
 
     const state: Record<string, unknown> = {
@@ -488,6 +650,8 @@ export class SequenceBuilder<Ctx> {
     if (config.resultPath !== null) {
       state['ResultPath'] = `$.${name}`;
     }
+
+    applyTimeouts(name, state, config);
 
     if (config.retry) {
       state['Retry'] = config.retry;
@@ -506,11 +670,14 @@ export class SequenceBuilder<Ctx> {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private buildCatchEntries(configs: CatchConfig<any, any>[]): CatchEntry[] {
-    return configs.map((c) => ({
-      errorEquals: c.errorEquals,
-      resultPath: c.resultPath,
-      builder: c.handler(new SequenceBuilder<Ctx>()),
-    }));
+    return configs.map((c) => {
+      assertResultPathKey('catch handler', c.resultPath);
+      return {
+        errorEquals: c.errorEquals,
+        resultPath: c.resultPath,
+        builder: c.handler(new SequenceBuilder<Ctx>()),
+      };
+    });
   }
 
   /**
@@ -541,24 +708,26 @@ export class SequenceBuilder<Ctx> {
    */
   parallel<
     Name extends string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Branches extends readonly SequenceBuilder<any>[],
+    Branches extends readonly BranchInput<Ctx>[],
     CatchKey extends string = never,
   >(
     name: Name,
     branches: [...Branches],
     options?: { retry?: RetryConfig[]; catch?: CatchConfig<Ctx, CatchKey>[] },
-  ): SequenceBuilder<Ctx & Record<Name, BranchOutputTuple<Ctx, Branches>>>;
+  ): SequenceBuilder<
+    Omit<Ctx, Name> & Record<Name, BranchOutputTuple<Ctx, Branches>>
+  >;
 
   parallel(
     name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    branches: SequenceBuilder<any>[],
+    branches: BranchInput<Ctx>[],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     options?: { retry?: RetryConfig[]; catch?: CatchConfig<any, any>[] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
-    const aslBranches = branches.map((b) => b.build());
+    const aslBranches = branches.map((b) =>
+      (typeof b === 'function' ? b(new SequenceBuilder<Ctx>()) : b).build(),
+    );
 
     const state: Record<string, unknown> = {
       Type: 'Parallel',
@@ -613,7 +782,7 @@ export class SequenceBuilder<Ctx> {
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
-  ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<M>>>;
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, UnwrapRefs<M>>>;
 
   /**
    * Append a Pass state that injects a literal value at a given path.
@@ -632,8 +801,8 @@ export class SequenceBuilder<Ctx> {
    */
   pass<R, Key extends string>(
     name: string,
-    config: { result: R; resultPath: `$.${Key}` },
-  ): SequenceBuilder<Ctx & Record<Key, R>>;
+    config: { result: R; resultPath: `$.${Key}` & ResultPathKeyCheck<Key> },
+  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, R>>;
 
   pass(
     name: string,
@@ -645,6 +814,7 @@ export class SequenceBuilder<Ctx> {
   ): SequenceBuilder<any> {
     // Overload 2: literal Result
     if (typeof mappingFnOrConfig !== 'function') {
+      assertResultPathKey(`pass "${name}"`, mappingFnOrConfig.resultPath);
       const state: Record<string, unknown> = {
         Type: 'Pass',
         Result: mappingFnOrConfig.result,
@@ -672,6 +842,60 @@ export class SequenceBuilder<Ctx> {
   }
 
   /**
+   * Append a Wait state to the sequence.
+   *
+   * Pauses execution for a fixed duration, until a fixed timestamp, or
+   * for a duration/until a timestamp read from the state data. Exactly
+   * one of the four options must be provided; the context type is
+   * unchanged (a Wait state doesn't touch the data).
+   *
+   * For the `...Path` variants, use the callback form to get a typed
+   * context proxy, like `task` payload callbacks.
+   *
+   * @example
+   * ```ts
+   * builder.wait('cooldown', { seconds: 30 })
+   * builder.wait('untilReady', (ctx) => ({ timestampPath: ctx.job.notBefore }))
+   * ```
+   */
+  wait(
+    name: string,
+    config: WaitConfig | ((ctx: Proxied<Ctx>) => WaitConfig),
+  ): SequenceBuilder<Ctx> {
+    const resolved =
+      typeof config === 'function' ? config(createProxy<Ctx>()) : config;
+    const c = resolved as {
+      seconds?: number;
+      timestamp?: string;
+      secondsPath?: Ref<number>;
+      timestampPath?: Ref<string>;
+    };
+    const provided = [
+      c.seconds,
+      c.timestamp,
+      c.secondsPath,
+      c.timestampPath,
+    ].filter((v) => v !== undefined);
+    if (provided.length !== 1) {
+      throw new Error(
+        `Wait state "${name}" needs exactly one of seconds, timestamp, secondsPath, timestampPath — got ${provided.length}`,
+      );
+    }
+
+    const state: Record<string, unknown> = { Type: 'Wait' };
+    if (c.seconds !== undefined) state['Seconds'] = c.seconds;
+    if (c.timestamp !== undefined) state['Timestamp'] = c.timestamp;
+    if (c.secondsPath !== undefined) {
+      state['SecondsPath'] = pathOf(c.secondsPath);
+    }
+    if (c.timestampPath !== undefined) {
+      state['TimestampPath'] = pathOf(c.timestampPath);
+    }
+
+    return this.append<Ctx>(name, state);
+  }
+
+  /**
    * Append a Map state to the sequence.
    *
    * Iterates over an array in the state data, running the ItemProcessor
@@ -686,14 +910,14 @@ export class SequenceBuilder<Ctx> {
    *
    * @example
    * ```ts
-   * // Pre-built processor (ignore b)
+   * // Pre-built processor (ignore b); items as a typed ref selector
    * builder.map('processScenes', {
-   *   itemsPath: '$.scenes',
+   *   items: (ctx) => ctx.scenes,
    *   itemSelector: (item, ctx) => ({ scene: item.value }),
    *   processor: () => sceneProcessor,
    * })
    *
-   * // Inline processor — context inferred from selector
+   * // Inline processor — context inferred from selector; raw itemsPath
    * builder.map('extractAudio', {
    *   itemsPath: '$.sentences',
    *   itemSelector: (item: MapItemRef<Sentence>, ctx) => ({
@@ -708,7 +932,27 @@ export class SequenceBuilder<Ctx> {
    * ```
    */
   /**
-   * Overload: `itemsPath` is a string literal — inferred `ItemType`.
+   * Overload: `items` is a typed ref selector — `items: (ctx) =>
+   * ctx.scenes` gets code completion, a typo doesn't compile, and
+   * `ItemType` is inferred from the ref. Preferred over `itemsPath`.
+   */
+  map<
+    Name extends string,
+    ItemType,
+    S extends Record<string, unknown>,
+    ProcessorCtx,
+    CatchKey extends string = never,
+  >(
+    name: Name,
+    config: MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey> & {
+      items: (ctx: Proxied<Ctx>) => Ref<readonly ItemType[]>;
+      itemsPath?: undefined;
+    },
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
+
+  /**
+   * Overload: `itemsPath` is a string literal — `ItemType` inferred by
+   * parsing the path against the context type.
    */
   map<
     Name extends string,
@@ -720,14 +964,15 @@ export class SequenceBuilder<Ctx> {
     name: Name,
     config: MapConfig<
       Ctx,
-      PathValue<Ctx, ItemsPath> extends (infer I)[] ? I : never,
+      PathValue<Ctx, ItemsPath> extends readonly (infer I)[] ? I : never,
       S,
       ProcessorCtx,
       CatchKey
     > & {
       itemsPath: ItemsPath;
+      items?: undefined;
     },
-  ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
 
   map<
     Name extends string,
@@ -738,15 +983,48 @@ export class SequenceBuilder<Ctx> {
   >(
     name: Name,
     config: MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey>,
-  ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
+  ): SequenceBuilder<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>;
 
   map(
     name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: MapConfig<any, any, any, any, any>,
+    // Broad structural type: generic Omit intersections defeat the
+    // overload-compatibility check, so the impl spells the fields out.
+    config: {
+      itemsPath?: string;
+      items?: (ctx: Proxied<Ctx>) => Ref<readonly unknown[]>;
+      maxConcurrency?: number;
+      retry?: RetryConfig[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      catch?: CatchConfig<any, any>[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      itemSelector: (item: any, ctx: any) => Record<string, unknown>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      processor: (b: any) => SequenceBuilder<any>;
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const outerProxy = createProxy<Ctx>();
+
+    // Resolve the items source before running the selector/processor
+    // callbacks, so a misconfiguration surfaces as this error rather
+    // than whatever those callbacks happen to throw first.
+    let itemsPath: string;
+    if (config.items) {
+      const ref = config.items(outerProxy);
+      if (!isRef(ref)) {
+        throw new Error(
+          `Map state "${name}": items must return a typed ref from the context (e.g. (ctx) => ctx.scenes). For a raw JSONPath string, use itemsPath instead.`,
+        );
+      }
+      itemsPath = pathOf(ref);
+    } else if (config.itemsPath !== undefined) {
+      itemsPath = config.itemsPath;
+    } else {
+      throw new Error(
+        `Map state "${name}" needs either items (a typed ref selector) or itemsPath`,
+      );
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const itemProxy = createMapItemProxy<any>();
     const selectorMapping = config.itemSelector(itemProxy, outerProxy);
@@ -758,7 +1036,7 @@ export class SequenceBuilder<Ctx> {
 
     const state: Record<string, unknown> = {
       Type: 'Map',
-      ItemsPath: config.itemsPath,
+      ItemsPath: itemsPath,
       ResultPath: `$.${name}`,
       ItemSelector: itemSelector,
       ItemProcessor: {
@@ -791,8 +1069,15 @@ export class SequenceBuilder<Ctx> {
    * The parameters callback supports refs and intrinsic functions at any
    * nesting depth.
    *
-   * @typeParam Name - State name and context key.
-   * @typeParam O - Output type (defaults to `Record<string, unknown>`).
+   * The context follows the ASL semantics of `ResultPath`, not the state
+   * name: with `resultPath: '$.transcodeJob'` the result is available as
+   * `ctx.transcodeJob`; with no `resultPath`, the result replaces the
+   * entire state input and the context becomes the task's output alone.
+   * Pass `outputSchema` to type that output — exactly like `task`, it
+   * generates a `ResultSelector` projecting each schema key from the raw
+   * result, so the typed context matches what actually lands in the data
+   * (and optional fields are rejected, since the selector references
+   * every key).
    *
    * @example
    * ```ts
@@ -809,17 +1094,60 @@ export class SequenceBuilder<Ctx> {
    *     },
    *   }),
    *   resultPath: '$.transcodeJob',
+   *   outputSchema: z.object({ JobId: z.string() }),
    * })
+   * // ctx.transcodeJob.JobId: string
    * ```
    */
+
+  /** Overload: `resultPath` + `outputSchema` — typed result at `ctx.{key}`. */
   customTask<
-    Name extends string,
-    O = Record<string, unknown>,
+    OSchema extends AnyZodObject,
+    Key extends string,
     CatchKey extends string = never,
   >(
-    name: Name,
-    config: CustomTaskConfig<Ctx, CatchKey>,
-  ): SequenceBuilder<Ctx & Record<Name, O>> {
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
+      outputSchema: OSchema;
+    } & RequireNoOptionalOutputs<OSchema>,
+  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, z.infer<OSchema>>>;
+
+  /** Overload: `resultPath` only — untyped result at `ctx.{key}`. */
+  customTask<Key extends string, CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
+      outputSchema?: undefined;
+    },
+  ): SequenceBuilder<Omit<Ctx, Key> & Record<Key, Record<string, unknown>>>;
+
+  /** Overload: no `resultPath` — the typed output replaces the input. */
+  customTask<OSchema extends AnyZodObject, CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath?: undefined;
+      outputSchema: OSchema;
+    } & RequireNoOptionalOutputs<OSchema>,
+  ): SequenceBuilder<z.infer<OSchema>>;
+
+  /** Overload: no `resultPath`, no schema — untyped replacement. */
+  customTask<CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath?: undefined;
+      outputSchema?: undefined;
+    },
+  ): SequenceBuilder<Record<string, unknown>>;
+
+  customTask(
+    name: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    config: CustomTaskConfig<Ctx, any>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): SequenceBuilder<any> {
+    assertResultPathKey(`customTask "${name}"`, config.resultPath);
+
     const proxy = createProxy<Ctx>();
     const rawParams = config.parameters(proxy);
     const parameters = serializeParameters(rawParams);
@@ -830,9 +1158,20 @@ export class SequenceBuilder<Ctx> {
       Parameters: parameters,
     };
 
+    if (config.outputSchema) {
+      state['ResultSelector'] = buildResultSelector(
+        name,
+        config.outputSchema,
+        '$',
+        'List only fields the service always returns, or drop outputSchema for an untyped result.',
+      );
+    }
+
     if (config.resultPath !== undefined) {
       state['ResultPath'] = config.resultPath;
     }
+
+    applyTimeouts(name, state, config);
 
     if (config.retry) {
       state['Retry'] = config.retry;
@@ -843,7 +1182,7 @@ export class SequenceBuilder<Ctx> {
         this.buildCatchEntries(config.catch);
     }
 
-    return this.append<Ctx & Record<Name, O>>(name, state);
+    return this.append(name, state);
   }
 
   /**
@@ -1238,6 +1577,40 @@ function serializeItem(item: unknown): unknown {
  * - Skips `undefined` values (optional schema fields can be omitted)
  */
 /**
+ * Serialize `TimeoutConfig` options onto a Task state, enforcing that the
+ * static and `...Path` variants of each option are mutually exclusive —
+ * ASL rejects a state carrying both.
+ */
+function applyTimeouts(
+  name: string,
+  state: Record<string, unknown>,
+  config: TimeoutConfig,
+): void {
+  if (config.timeoutSeconds !== undefined && config.timeoutSecondsPath) {
+    throw new Error(
+      `Task "${name}" has both timeoutSeconds and timeoutSecondsPath — they are mutually exclusive`,
+    );
+  }
+  if (config.heartbeatSeconds !== undefined && config.heartbeatSecondsPath) {
+    throw new Error(
+      `Task "${name}" has both heartbeatSeconds and heartbeatSecondsPath — they are mutually exclusive`,
+    );
+  }
+  if (config.timeoutSeconds !== undefined) {
+    state['TimeoutSeconds'] = config.timeoutSeconds;
+  }
+  if (config.timeoutSecondsPath) {
+    state['TimeoutSecondsPath'] = pathOf(config.timeoutSecondsPath);
+  }
+  if (config.heartbeatSeconds !== undefined) {
+    state['HeartbeatSeconds'] = config.heartbeatSeconds;
+  }
+  if (config.heartbeatSecondsPath) {
+    state['HeartbeatSecondsPath'] = pathOf(config.heartbeatSecondsPath);
+  }
+}
+
+/**
  * The shape of a Zod 4 schema's `def`, restricted to the slice this
  * module inspects. Kept structural so we don't depend on Zod's internal
  * class hierarchy.
@@ -1365,16 +1738,34 @@ function buildAslPayload(
  *
  * Produces `{ "key.$": "$.Payload.key" }` for every key in the schema.
  *
- * Caveat: ASL errors at runtime when a referenced key is absent from the
- * payload, so a schema with `.optional()` fields the Lambda may omit needs
- * an explicit `resultSelector` instead of this auto-generated one.
+ * A schema with `.optional()` fields is rejected: the generated selector
+ * references every key, and ASL errors at runtime when a referenced key
+ * is absent. Such schemas must pass an explicit `resultSelector` (also
+ * enforced at compile time by `RequireResultSelectorForOptionalOutputs`).
  */
 function buildResultSelector(
+  stateName: string,
   outputSchema: AnyZodObject,
+  resultPrefix: string,
+  optionalFieldAdvice: string,
 ): Record<string, string> {
+  const optionalKeys = Object.entries(
+    outputSchema.shape as Record<string, unknown>,
+  )
+    .filter(
+      ([, field]) =>
+        (field as { def?: { type?: string } }).def?.type === 'optional',
+    )
+    .map(([key]) => key);
+  if (optionalKeys.length > 0) {
+    throw new Error(
+      `Task "${stateName}": output schema field(s) ${optionalKeys.join(', ')} are optional, but the auto-generated ResultSelector references every key and ASL errors at runtime when one is absent. ${optionalFieldAdvice}`,
+    );
+  }
+
   const selector: Record<string, string> = {};
   for (const key of Object.keys(outputSchema.shape)) {
-    selector[`${key}.$`] = `$.Payload.${key}`;
+    selector[`${key}.$`] = `${resultPrefix}.${key}`;
   }
   return selector;
 }

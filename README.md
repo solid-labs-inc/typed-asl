@@ -16,7 +16,7 @@ npm install typed-asl zod
 
 Hand-written ASL and Lambda handler schemas are disconnected: misaligned payloads, dangling JSONPath references and type mismatches surface only at runtime, mid-execution. If a machine built here typechecks, its payloads are correct.
 
-Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, and cross-branch parallel access (`ctx.par[1].stateFromBranch0`). Every guarantee here has a matching negative test (`src/lib/type-guarantees.test.ts`) that fails the build if the API stops rejecting the bad code.
+Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, cross-branch parallel access (`ctx.par[1].stateFromBranch0`), out-of-range parallel indices (`ctx.par[2]` on a two-branch parallel), choice conditions whose variable or operand type disagrees with the operator, `map` item selectors that are typos or not arrays, `customTask` refs that point where the result doesn't live, and optional output fields without an explicit `resultSelector`. Known ASL error names (`States.Timeout`, `Lambda.TooManyRequestsException`, …) autocomplete in `retry`/`catch` configs. Every guarantee here has a matching negative test (`src/lib/type-guarantees.test.ts`) that fails the build if the API stops rejecting the bad code.
 
 ```ts
 import { SequenceBuilder } from 'typed-asl';
@@ -90,15 +90,14 @@ Each claim above is pinned by something that fails the build when it stops being
 
 ## Scope
 
-Supported states: `Task` (Lambda, plus a `customTask` escape hatch for any service integration ARN), `Parallel`, `Map`, `Choice`, `Pass`, `Fail`, `Succeed`. `Retry` and `Catch` work on `Task`, `customTask`, `Map`, and `Parallel`. Choice supports every JSONPath-mode comparison operator except the `*Path` variants. Intrinsics: `States.Format`, `JsonToString`, `StringToJson`, `MathAdd`, `Array`, `ArrayLength`, `UUID`.
+Supported states: `Task` (Lambda, plus a `customTask` escape hatch for any service integration ARN), `Parallel`, `Map`, `Choice`, `Pass`, `Wait`, `Fail`, `Succeed`. `Retry` and `Catch` work on `Task`, `customTask`, `Map`, and `Parallel`; `TimeoutSeconds`/`HeartbeatSeconds` (and their `...Path` variants) on `Task` and `customTask`. Choice supports every JSONPath-mode comparison operator, `*Path` variants included (typed refs on both sides). Intrinsics: the full JSONPath-mode set — `Format`, `JsonToString`, `StringToJson`, `JsonMerge`, `Array`, `ArrayLength`, `ArrayGetItem`, `ArrayContains`, `ArrayRange`, `ArrayUnique`, `ArrayPartition`, `MathAdd`, `MathRandom`, `StringSplit`, `Base64Encode`/`Decode`, `Hash`, `UUID`.
 
 Not yet supported, and worth knowing before you adopt:
 
 - **JSONPath mode only.** The newer JSONata query language and `Assign`/variables are not implemented; the ref machinery assumes JSONPath.
 - **No Distributed Map** (`ItemReader`/`ResultWriter`/`ItemBatcher`).
-- **No `Wait` state**, and no state-level `TimeoutSeconds`/`HeartbeatSeconds`.
 - **Zod only.** Output schemas drive `ResultSelector` generation, so other validators aren't pluggable today.
-- **Optional output fields need a custom `resultSelector`.** The auto-generated selector maps every output schema key from `$.Payload.{key}`, and ASL errors at runtime when a referenced key is absent. If a Lambda may omit a field, pass an explicit `resultSelector`.
+- **Optional output fields require an explicit `resultSelector`.** The auto-generated selector maps every output schema key from `$.Payload.{key}`, and ASL errors at runtime when a referenced key is absent — so a schema with `.optional()` fields is rejected at compile time (and at build time) unless you pass a `resultSelector` selecting only what the Lambda always returns.
 - **`build()` does not validate against the ASL spec.** It guarantees your mappings and refs, not that AWS will accept every machine you can express. (The library's own test fixtures are all checked against the spec with `asl-validator` in CI — your machines at build time are not.)
 
 This came out of a production monorepo, where it builds real state machines — but it has been shaped by a small number of them. Expect rough edges on shapes we haven't hit. Issues and PRs welcome.

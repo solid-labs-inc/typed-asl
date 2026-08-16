@@ -5,6 +5,9 @@ import {
   DEFAULT_RETRY,
   SequenceBuilder,
   THROTTLE_RETRY,
+  type InferContext,
+  type MapConfig,
+  type ResultPathKeyCheck,
   type RetryConfig,
 } from './builder.js';
 import { serializeCondition } from './choice.js';
@@ -3566,11 +3569,13 @@ describe('task with catch', () => {
             errorEquals: ['States.ALL'],
             resultPath: '$.taskError',
             handler: (b) => {
-              expectTypeOf(b).toExtend<
-                SequenceBuilder<
-                  { bucket: string } & Record<'taskError', unknown>
-                >
-              >();
+              type HandlerCtx = InferContext<typeof b>;
+              expectTypeOf<HandlerCtx['bucket']>().toEqualTypeOf<string>();
+              // The caught error is typed — Cause/Error are usable in
+              // choice conditions and payload mappings.
+              expectTypeOf<
+                HandlerCtx['taskError']['Cause']
+              >().toEqualTypeOf<string>();
               return b.succeed('recovered');
             },
           },
@@ -3829,5 +3834,632 @@ describe('extra payload key rejection at runtime', () => {
         ],
       }),
     ).toThrow('Payload field "refs[1].keey" is not in the input schema');
+  });
+});
+
+// ── M2: Wait state ──────────────────────────────────────────────────
+
+describe('wait', () => {
+  type Ctx = { delaySeconds: number; job: { notBefore: string } };
+
+  it('serializes each of the four variants', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .wait('cooldown', { seconds: 30 })
+      .wait('untilDate', { timestamp: '2026-09-01T00:00:00Z' })
+      .wait('dataDelay', { secondsPath: createProxy<Ctx>().delaySeconds })
+      .wait('dataDate', (c) => ({ timestampPath: c.job.notBefore }))
+      .succeed('done')
+      .build();
+
+    expect(machine.States['Cooldown']).toMatchObject({
+      Type: 'Wait',
+      Seconds: 30,
+    });
+    expect(machine.States['UntilDate']).toMatchObject({
+      Type: 'Wait',
+      Timestamp: '2026-09-01T00:00:00Z',
+    });
+    expect(machine.States['DataDelay']).toMatchObject({
+      Type: 'Wait',
+      SecondsPath: '$.delaySeconds',
+    });
+    expect(machine.States['DataDate']).toMatchObject({
+      Type: 'Wait',
+      TimestampPath: '$.job.notBefore',
+    });
+  });
+
+  it('leaves the context type unchanged', () => {
+    const b = new SequenceBuilder<Ctx>().wait('w', { seconds: 1 });
+    expectTypeOf(b).toEqualTypeOf<SequenceBuilder<Ctx>>();
+  });
+
+  it('requires exactly one option', () => {
+    expect(() => new SequenceBuilder<Ctx>().wait('w', {} as never)).toThrow(
+      'exactly one of seconds, timestamp, secondsPath, timestampPath',
+    );
+    expect(() =>
+      new SequenceBuilder<Ctx>().wait('w', {
+        seconds: 1,
+        timestamp: 'x',
+      } as never),
+    ).toThrow('exactly one of');
+  });
+});
+
+// ── M2: Timeouts and heartbeats ─────────────────────────────────────
+
+describe('task timeouts', () => {
+  type Ctx = { bucket: string; key: string; budgetSeconds: number };
+  const config = {
+    inputSchema: LoadFileUploadInput,
+    outputSchema: LoadFileUploadOutput,
+    functionArn: LAMBDA_ARN,
+  };
+  const payload = (ctx: Proxied<Ctx>) => ({
+    step: 'load-file-upload' as const,
+    bucket: ctx.bucket,
+    key: ctx.key,
+  });
+
+  it('serializes static timeout and heartbeat on task', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFileUpload',
+        { ...config, timeoutSeconds: 300, heartbeatSeconds: 60 },
+        payload,
+      )
+      .build();
+
+    expect(machine.States['LoadFileUpload']).toMatchObject({
+      TimeoutSeconds: 300,
+      HeartbeatSeconds: 60,
+    });
+  });
+
+  it('serializes path variants from typed refs', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'loadFileUpload',
+        {
+          ...config,
+          timeoutSecondsPath: createProxy<Ctx>().budgetSeconds,
+        },
+        payload,
+      )
+      .build();
+
+    expect(machine.States['LoadFileUpload']).toMatchObject({
+      TimeoutSecondsPath: '$.budgetSeconds',
+    });
+  });
+
+  it('serializes timeouts on customTask', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ Bucket: ctx.bucket }),
+        resultPath: '$.transcode',
+        timeoutSeconds: 3600,
+      })
+      .build();
+
+    expect(machine.States['Transcode']).toMatchObject({
+      TimeoutSeconds: 3600,
+    });
+  });
+
+  it('rejects static + path for the same option', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'loadFileUpload',
+        {
+          ...config,
+          timeoutSeconds: 300,
+          timeoutSecondsPath: createProxy<Ctx>().budgetSeconds,
+        },
+        payload,
+      ),
+    ).toThrow('mutually exclusive');
+  });
+});
+
+// ── M2: *Path choice operators ──────────────────────────────────────
+
+describe('choice *Path operators', () => {
+  type Ctx = { a: number; b: number; s: string; t: string; flag: boolean };
+  const ctx = createProxy<Ctx>();
+
+  it.each([
+    [
+      'stringEqualsPath',
+      { variable: ctx.s, stringEqualsPath: ctx.t },
+      'StringEqualsPath',
+    ],
+    [
+      'numericLessThanPath',
+      { variable: ctx.a, numericLessThanPath: ctx.b },
+      'NumericLessThanPath',
+    ],
+    [
+      'numericGreaterThanEqualsPath',
+      { variable: ctx.a, numericGreaterThanEqualsPath: ctx.b },
+      'NumericGreaterThanEqualsPath',
+    ],
+    [
+      'booleanEqualsPath',
+      { variable: ctx.flag, booleanEqualsPath: ctx.flag },
+      'BooleanEqualsPath',
+    ],
+    [
+      'timestampLessThanPath',
+      { variable: ctx.s, timestampLessThanPath: ctx.t },
+      'TimestampLessThanPath',
+    ],
+  ] as const)(
+    'serializes %s with the operand as a path',
+    (_name, condition, pascal) => {
+      const serialized = serializeCondition(condition as never);
+      expect(serialized['Variable']).toMatch(/^\$\./);
+      expect(typeof serialized[pascal]).toBe('string');
+      expect(serialized[pascal]).toMatch(/^\$\./);
+    },
+  );
+
+  it('produces a working Choice state end to end', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .choice('compare', (c) => ({
+        choices: [
+          {
+            when: { variable: c.a, numericLessThanPath: c.b },
+            then: (b) => b.succeed('aSmaller'),
+          },
+        ],
+        default: (b) => b.succeed('bSmaller'),
+      }))
+      .build();
+
+    const choice = machine.States['Compare'] as Record<string, unknown>;
+    expect((choice['Choices'] as unknown[])[0]).toMatchObject({
+      Variable: '$.a',
+      NumericLessThanPath: '$.b',
+      Next: 'ASmaller',
+    });
+  });
+});
+
+// ── M2: parallel branch factories ───────────────────────────────────
+
+describe('parallel branch factories', () => {
+  type Ctx = { bucket: string; key: string };
+  const extractConfig = {
+    inputSchema: ExtractFramesInput,
+    outputSchema: ExtractFramesOutput,
+    functionArn: LAMBDA_ARN,
+  };
+  const transcodeConfig = {
+    inputSchema: TranscodePreviewInput,
+    outputSchema: TranscodePreviewOutput,
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('factory branches produce the same ASL as prebuilt builders', () => {
+    const viaFactories = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        (b) =>
+          b.task('extractFrames', extractConfig, (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+        (b) =>
+          b.task('transcodePreview', transcodeConfig, (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+      ])
+      .build();
+
+    const viaPrebuilt = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        new SequenceBuilder<Ctx>().task(
+          'extractFrames',
+          extractConfig,
+          (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          }),
+        ),
+        new SequenceBuilder<Ctx>().task(
+          'transcodePreview',
+          transcodeConfig,
+          (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          }),
+        ),
+      ])
+      .build();
+
+    expect(viaFactories).toEqual(viaPrebuilt);
+  });
+
+  it('keeps per-index branch types through the factory form', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        (bb) =>
+          bb.task('extractFrames', extractConfig, (ctx) => ({
+            step: 'extract-frames' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+        (bb) =>
+          bb.task('transcodePreview', transcodeConfig, (ctx) => ({
+            step: 'transcode-preview' as const,
+            bucket: ctx.bucket,
+            key: ctx.key,
+          })),
+      ])
+      .pass('after', (ctx) => ({
+        width: ctx.process[0].extractFrames.width,
+        preview: ctx.process[1].transcodePreview.previewStorageRef,
+      }));
+
+    // If per-index inference degraded to a union, `extractFrames` would
+    // not be accessible on index 0 without narrowing and this would not
+    // compile; the negative cross-branch case lives in
+    // type-guarantees.test.ts.
+    expectTypeOf(b).not.toBeAny();
+  });
+
+  it('mixes factory and prebuilt branches', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .parallel('process', [
+        new SequenceBuilder<Ctx>().pass('markA', () => ({ a: 1 })),
+        (b) => b.pass('markB', () => ({ b: 2 })),
+      ])
+      .build();
+
+    const state = machine.States['Process'] as { Branches: unknown[] };
+    expect(state.Branches).toHaveLength(2);
+  });
+});
+
+// ── M2: optional output fields require an explicit resultSelector ───
+
+describe('optional output fields', () => {
+  type Ctx = { videoId: string };
+  const OptionalOutput = z.object({
+    transcript: z.string().optional(),
+    always: z.string(),
+  });
+  const config = {
+    inputSchema: z.object({ videoId: z.string() }),
+    outputSchema: OptionalOutput,
+    functionArn: LAMBDA_ARN,
+  };
+
+  it('throws at build time without an explicit resultSelector', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().task(
+        'transcribe',
+        config as never,
+        ((ctx: Proxied<Ctx>) => ({ videoId: ctx.videoId })) as never,
+      ),
+    ).toThrow('output schema field(s) transcript are optional');
+  });
+
+  it('builds fine with an explicit resultSelector', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .task(
+        'transcribe',
+        {
+          ...config,
+          resultSelector: (output) => ({ always: output.always }),
+        },
+        (ctx) => ({ videoId: ctx.videoId }),
+      )
+      .build();
+
+    expect(machine.States['Transcribe']).toMatchObject({
+      ResultSelector: { 'always.$': '$.Payload.always' },
+    });
+  });
+});
+
+// ── Type-tightening pass: customTask context honesty ────────────────
+
+describe('customTask context typing', () => {
+  type Ctx = { parentVideoId: string };
+
+  it('keys the context by the resultPath, not the state name', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ JobName: ctx.parentVideoId }),
+        resultPath: '$.transcodeJob',
+        outputSchema: z.object({ JobId: z.string() }),
+      })
+      .pass('after', (ctx) => ({
+        // The data lives at $.transcodeJob — and so does the type.
+        jobId: ctx.transcodeJob.JobId,
+      }));
+
+    type After = InferContext<typeof b>;
+    expectTypeOf<After['transcodeJob']>().toEqualTypeOf<{ JobId: string }>();
+    expectTypeOf<After['after']>().toEqualTypeOf<{ jobId: string }>();
+
+    const machine = b.build();
+    const after = machine.States['After'] as Record<string, unknown>;
+    expect(after['Parameters']).toEqual({ 'jobId.$': '$.transcodeJob.JobId' });
+
+    // outputSchema is load-bearing, exactly like task's: it generates a
+    // ResultSelector projecting each schema key from the raw result.
+    const transcode = machine.States['Transcode'] as Record<string, unknown>;
+    expect(transcode['ResultSelector']).toEqual({ 'JobId.$': '$.JobId' });
+  });
+
+  it('rejects an outputSchema with optional fields — no selector could be honest', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // Overload resolution pins one error per mismatched property:
+        // @ts-expect-error — the optional-field gate disqualifies the schema overloads
+        resultPath: '$.job',
+        // @ts-expect-error — same, anchored on the schema property
+        outputSchema: z.object({
+          JobId: z.string(),
+          JobArn: z.string().optional(),
+        }),
+      }),
+    ).toThrow('JobArn are optional');
+  });
+
+  it('a later resultPath overwrite replaces the key type instead of intersecting', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .customTask('first', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.job',
+        outputSchema: z.object({ oldField: z.string() }),
+      })
+      .customTask('second', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.job',
+        outputSchema: z.object({ newField: z.number() }),
+      });
+
+    // Runtime last-write-wins; the type follows. A stale `A & B`
+    // intersection here would let refs to oldField compile after the
+    // data was overwritten.
+    type After = InferContext<typeof b>;
+    expectTypeOf<After['job']>().toEqualTypeOf<{ newField: number }>();
+  });
+
+  it('without resultPath, the result replaces the whole input', () => {
+    const b = new SequenceBuilder<Ctx>().customTask('fetch', {
+      resource: 'arn:aws:states:::aws-sdk:s3:getObject',
+      parameters: () => ({ Bucket: 'b' }),
+      outputSchema: z.object({ Body: z.string() }),
+    });
+
+    // ASL's default ResultPath is '$' — the context is now the output
+    // alone; parentVideoId is gone.
+    expectTypeOf(b).toEqualTypeOf<SequenceBuilder<{ Body: string }>>();
+  });
+
+  it('without an outputSchema the result is untyped but still keyed correctly', () => {
+    const b = new SequenceBuilder<Ctx>().customTask('submit', {
+      resource: 'arn:aws:states:::batch:submitJob',
+      parameters: () => ({}),
+      resultPath: '$.job',
+    });
+
+    expectTypeOf(b).toEqualTypeOf<
+      SequenceBuilder<Ctx & Record<'job', Record<string, unknown>>>
+    >();
+  });
+
+  it('rejects a resultPath that is not $.{identifier}, at compile time and runtime', () => {
+    // Compile time: ResultPathKeyCheck collapses the property to never
+    // (and the same guard throws when the statement runs).
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // @ts-expect-error — nested paths cannot be represented in the
+        // context type
+        resultPath: '$.a.b',
+      }),
+    ).toThrow('must be "$.{key}"');
+
+    // Runtime, for plain-JS callers (the cast bypasses the type check):
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.a.b' as '$.x',
+      }),
+    ).toThrow('must be "$.{key}" with a single identifier key');
+  });
+});
+
+// ── Shared resultPath key guard on pass and catch ───────────────────
+
+describe('resultPath key guard on pass and catch', () => {
+  type Ctx = { bucket: string };
+
+  it('pass literal-result overload rejects nested resultPath', () => {
+    // Compile-time half, asserted on the type directly — overload-error
+    // anchor positions differ between compiler generations (TS 5.7 pins
+    // the call, TS 7 pins the property), so a @ts-expect-error on the
+    // full call is not version-stable.
+    expectTypeOf<ResultPathKeyCheck<'flags'>>().toEqualTypeOf<'$.flags'>();
+    expectTypeOf<ResultPathKeyCheck<'flags.done'>>().toEqualTypeOf<never>();
+    expectTypeOf<ResultPathKeyCheck<'flags[0]'>>().toEqualTypeOf<never>();
+
+    expect(() =>
+      new SequenceBuilder<Ctx>().pass('setFlag', {
+        result: true,
+        resultPath: '$.flags.done' as '$.x',
+      }),
+    ).toThrow('must be "$.{key}" with a single identifier key');
+  });
+
+  it('catch config rejects nested resultPath', () => {
+    const attempt = () =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        // The bad nested catch resultPath fails every overload; TS
+        // pins one error per mismatched property:
+        // @ts-expect-error — anchored on the outer resultPath
+        resultPath: '$.job',
+        catch: [
+          {
+            errorEquals: ['States.ALL'],
+            // @ts-expect-error — anchored on the offending entry
+            resultPath: '$.errors.last',
+            handler: (b) => b.succeed('recovered'),
+          },
+        ],
+      });
+    expect(attempt).toThrow('must be "$.{key}" with a single identifier key');
+  });
+});
+
+// ── Choice serializer guards ────────────────────────────────────────
+
+describe('choice condition serializer guards', () => {
+  const ctx = createProxy<{ a: string; n: number }>();
+
+  it('throws when a condition carries two operator keys', () => {
+    // Union assignability admits this shape (each key exists in some
+    // arm), so the serializer has to catch it.
+    expect(() =>
+      serializeCondition({
+        variable: ctx.a,
+        stringEquals: 'x',
+        numericGreaterThan: 1,
+      } as never),
+    ).toThrow('has 2 comparison operators');
+  });
+
+  it('throws when a condition has no operator at all', () => {
+    expect(() => serializeCondition({ variable: ctx.a } as never)).toThrow(
+      'has no comparison operator',
+    );
+  });
+});
+
+// ── Type-tightening pass: map items ref selector ────────────────────
+
+describe('map items ref selector', () => {
+  type Scene = { id: string; startFrame: number };
+  type Ctx = { scenes: Scene[]; bucket: string };
+
+  it('serializes ItemsPath from the typed ref', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .map('processScenes', {
+        items: (ctx) => ctx.scenes,
+        itemSelector: (item, ctx) => ({
+          scene: item.value,
+          bucket: ctx.bucket,
+        }),
+        processor: (b) => b.pass('mark', (c) => ({ id: c.scene.id })),
+      })
+      .build();
+
+    const state = machine.States['ProcessScenes'] as Record<string, unknown>;
+    expect(state['ItemsPath']).toBe('$.scenes');
+  });
+
+  it('infers ItemType from the ref — item.value is typed', () => {
+    new SequenceBuilder<Ctx>().map('processScenes', {
+      items: (ctx) => ctx.scenes,
+      itemSelector: (item, ctx) => {
+        expectTypeOf(item.value.startFrame).toExtend<Ref<number>>();
+        return { start: item.value.startFrame, bucket: ctx.bucket };
+      },
+      processor: (b) => b.pass('mark', (c) => ({ s: c.start })),
+    });
+  });
+
+  it('throws when neither items nor itemsPath is given', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('processScenes', {
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: (b: SequenceBuilder<{ scene: Scene }>) =>
+          b.pass('mark', () => ({ ok: true })),
+      } as never),
+    ).toThrow('needs either items (a typed ref selector) or itemsPath');
+  });
+});
+
+// ── map misconfiguration and config-type coverage ───────────────────
+
+describe('map misconfiguration errors', () => {
+  type Scene = { id: string };
+  type Ctx = { scenes: Scene[] };
+
+  it('missing items/itemsPath surfaces before the processor runs', () => {
+    // The processor throws — but the missing-source diagnostic must win,
+    // since it is checked before any user callback is invoked.
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('m', {
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: () => {
+          throw new Error('processor exploded');
+        },
+      } as never),
+    ).toThrow('needs either items (a typed ref selector) or itemsPath');
+  });
+
+  it('items returning a raw string gets a clear error, not a pathOf crash', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('m', {
+        items: (() => '$.scenes') as never,
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: (b: SequenceBuilder<{ scene: Scene }>) =>
+          b.pass('mark', () => ({ ok: true })),
+      }),
+    ).toThrow('items must return a typed ref from the context');
+  });
+
+  it('the exported MapConfig type admits the items form', () => {
+    // Consumers factor shared configs through MapConfig — the
+    // recommended items shape must be expressible with it.
+    const shared: MapConfig<
+      Ctx,
+      Scene,
+      { scene: Ref<Scene> },
+      { scene: Scene; mark: { ok: boolean } }
+    > = {
+      items: (ctx) => ctx.scenes,
+      itemSelector: (item) => ({ scene: item.value }),
+      processor: (b) => b.pass('mark', () => ({ ok: true })),
+    };
+    const machine = new SequenceBuilder<Ctx>().map('m', shared).build();
+    expect((machine.States['M'] as Record<string, unknown>)['ItemsPath']).toBe(
+      '$.scenes',
+    );
+  });
+
+  it('itemsPath literal inference handles readonly arrays', () => {
+    type ReadonlyCtx = { scenes: readonly Scene[] };
+    new SequenceBuilder<ReadonlyCtx>().map('m', {
+      itemsPath: '$.scenes',
+      itemSelector: (item) => {
+        // Without the readonly-aware conditional this would be never
+        expectTypeOf(item.value).toExtend<Ref<Scene>>();
+        return { scene: item.value };
+      },
+      processor: (b) => b.pass('mark', () => ({ ok: true })),
+    });
   });
 });
