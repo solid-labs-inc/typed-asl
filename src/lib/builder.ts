@@ -6,6 +6,7 @@ import type { MapItemRef } from './proxy.js';
 import { createMapItemProxy, createProxy, isRef, pathOf } from './proxy.js';
 import type {
   AnyZodObject,
+  NoExtraPayloadKeys,
   Proxied,
   Ref,
   TypedPayloadMapping,
@@ -378,6 +379,7 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -386,7 +388,7 @@ export class SequenceBuilder<Ctx> {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => P & NoExtraPayloadKeys<I, P>,
   ): SequenceBuilder<UnwrapRefs<R>>;
 
   /**
@@ -397,6 +399,7 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -404,7 +407,7 @@ export class SequenceBuilder<Ctx> {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => P & NoExtraPayloadKeys<I, P>,
   ): SequenceBuilder<z.infer<O>>;
 
   /**
@@ -418,6 +421,7 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -425,7 +429,7 @@ export class SequenceBuilder<Ctx> {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => P & NoExtraPayloadKeys<I, P>,
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<R>>>;
 
   /**
@@ -436,13 +440,14 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => P & NoExtraPayloadKeys<I, P>,
   ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
 
   task(
@@ -1233,12 +1238,17 @@ function serializeItem(item: unknown): unknown {
  * - Skips `undefined` values (optional schema fields can be omitted)
  */
 function buildAslPayload(
-  _inputSchema: AnyZodObject,
+  inputSchema: AnyZodObject,
   mappedPayload: Record<string, unknown>,
 ): Record<string, unknown> {
   const aslPayload: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(mappedPayload)) {
+    if (!(key in inputSchema.shape)) {
+      throw new Error(
+        `Payload field "${key}" is not in the input schema — it would be sent to the Lambda but never validated. Remove it or add it to the schema.`,
+      );
+    }
     if (value === undefined) continue;
     if (isRef(value)) {
       aslPayload[`${key}.$`] = pathOf(value);

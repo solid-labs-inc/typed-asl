@@ -85,6 +85,34 @@ describe('Chapter 3: Zod Schemas as the Contract', () => {
     expect(payload['key.$']).toBe('$.key');
   });
 
+  // ── Extra fields are rejected ────────────────────────────────────────
+
+  it('a payload field that is not in the input schema is rejected', () => {
+    type Input = { bucket: string; key: string };
+
+    // The payload must match the schema *exactly*: a missing required
+    // field is a compile error, and so is an extra one. An extra field
+    // is usually a typo — and it would be sent to the Lambda without ever
+    // being validated. The same check exists at runtime for plain-JS
+    // callers, which is what this test exercises.
+    expect(() =>
+      new SequenceBuilder<Input>().task(
+        'runMediaInfo',
+        {
+          inputSchema: RunMediaInfoInput,
+          outputSchema: RunMediaInfoOutput,
+          functionArn: '${lambda_arn}',
+        },
+        (ctx) => ({
+          bucket: ctx.bucket,
+          key: ctx.key,
+          // @ts-expect-error — `bukcet` is not in RunMediaInfoInput
+          bukcet: ctx.bucket,
+        }),
+      ),
+    ).toThrow('Payload field "bukcet" is not in the input schema');
+  });
+
   // ── ResultSelector auto-generation ───────────────────────────────────
 
   it('output schema keys are auto-mapped to $.Payload.{key}', () => {

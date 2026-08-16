@@ -75,6 +75,17 @@ export type AnyZodObject = z.ZodObject<any>;
  * // }
  * ```
  */
+/**
+ * Companion to {@link TypedPayloadMapping}: marks every key of the mapping
+ * `P` that is not in the schema as `never`, so extra fields fail to
+ * compile. Plain assignability can't reject extra properties (and excess
+ * property checking doesn't fire against generic mapped types), so the
+ * task overloads intersect the callback's return type with this.
+ */
+export type NoExtraPayloadKeys<T extends AnyZodObject, P> = {
+  [K in Exclude<keyof P, keyof T['shape']>]: never;
+};
+
 export type TypedPayloadMapping<T extends AnyZodObject> = {
   [
     K in keyof T['shape'] as undefined extends z.infer<T['shape'][K]>
