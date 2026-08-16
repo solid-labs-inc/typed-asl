@@ -18,5 +18,10 @@
     "declaration": true,
     "noEmit": true
   },
-  "include": ["src", "tutorial", "test", "tsup.config.ts", "vitest.config.ts"]
+  "include": ["src", "tutorial", "test", "tsup.config.ts", "vitest.config.ts"],
+  // Compiled by `test/long-chain.test.ts` through the compiler API,
+  // which asserts it produces zero diagnostics. Type-checking it here as
+  // well would only pay the 40-state chain twice — ~4.7M instantiations,
+  // most of this project's check time.
+  "exclude": ["test/fixtures/long-chain.ts"]
 }

@@ -8,8 +8,40 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Chains no longer hit `TS2589: Type instantiation is excessively deep
+and possibly infinite`. Every context-widening call used to return
+  `Omit<Ctx, Name> & Record<Name, Out>`, making the context at step N a
+  mapped type wrapping step N-1's; resolving that stack cost `2^N`, so
+  instantiations doubled with each added call and the 17th failed to
+  compile — 16 states being an ordinary size for a state machine. The
+  builder now accumulates `[key, output]` pairs in a flat tuple and
+  materializes the context from it in one pass, which never wraps a
+  previous mapped type. A 16-state chain drops from ~29.3M
+  instantiations (and an error) to ~205k, and 40- and 64-state chains
+  type-check where they previously could not exist. Cost on this repo's
+  own suite is +4.8% instantiations with check time flat.
+  ([#14](https://github.com/solid-labs-inc/typed-asl/issues/14))
+
 ### Changed
 
+- **Breaking (type-level).** `SequenceBuilder` now takes three type
+  parameters — `SequenceBuilder<Ctx, Base, E>` — where the latter two
+  default from the first and carry the accumulation described above.
+  Writing the type with one argument is unaffected:
+  `new SequenceBuilder<Input>()`, `SequenceBuilder.create<Input>()`,
+  annotating a variable, parameter or return type as
+  `SequenceBuilder<SomeCtx>`, and single-type-parameter `pipe` helpers
+  (`<C>(b: SequenceBuilder<C>) => …`) all continue to work, because
+  `Base` and `E` appear on no property and so take no part in
+  assignability. What breaks is matching the type directly:
+  `T extends SequenceBuilder<infer C> ? C : never` now yields `never`
+  rather than the context — silently, since it is not an error. Use the
+  exported `InferContext<T>`, which has always been the supported
+  spelling, or match `SequenceBuilder<infer C, any, any>`.
+- `StateEntry` and `ContextOf` are exported for code that needs to name
+  the accumulation directly.
 - The accumulated context type now hovers as a plain object. Every
   context-widening return (`task`, `pass`, `map`, `parallel`,
   `customTask`, `choice`'s `Adds` overload) is wrapped in a new
@@ -18,10 +50,10 @@ and this project adheres to
   `{ key: string; bucket: string; loadFile: …; second: …; third: … }`
   instead of three nested `Omit`/`Record` layers. The same wrapping
   resolves the `UnwrapRefs<…>` alias that `pass` and `resultSelector`
-  left on the surface. Assignability is unchanged — the `Omit` that
-  makes a repeated state name replace its earlier entry stays, and
-  removing the class's `in out` variance annotation still fails to
-  compile. Two consequences worth knowing: keys render in the mapped
+  left on the surface. Assignability is unchanged — replacement of an
+  overwritten key is preserved (now by `ContextOf`, see the `TS2589`
+  entry above), and removing the class's `in out` variance annotation
+  still fails to compile. Two consequences worth knowing: keys render in the mapped
   type's iteration order rather than declaration order, and
   `CatchConfig`'s handler parameter is deliberately left unwrapped
   (with `Key` unresolved, `Record<Key, …>` is an index signature that

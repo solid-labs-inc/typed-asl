@@ -51,19 +51,20 @@ export type Proxied<T> = Ref<T> &
 /**
  * Flatten an intersection into a single object type, for display.
  *
- * Every context-widening builder method composes its result as
- * `Omit<Ctx, Name> & Record<Name, Out>` — the `Omit` is what makes a
- * repeated state name replace its earlier entry instead of intersecting
- * with it. Unwrapped, that composition is what hover shows, and it
- * nests once per chained call, so reading `ctx` off a five-task chain
- * means evaluating five layers of `Omit`/`Record` by hand.
+ * {@link ContextOf} builds the accumulated context as an intersection
+ * of two mapped types — the unclaimed keys of the base, and the keys
+ * the states contribute. Unwrapped, that composition is what hover
+ * shows, and hover is how a reader answers "what can I reach on `ctx`?".
  *
  * This mapped type resolves the intersection to its properties. The
  * result is mutually assignable with the input — only the rendering
- * changes. It is not free: resolving eagerly at each step costs ~8-13%
- * more instantiations on a 5-15 state chain (within noise on this
- * repo's own suite), and it neither raises nor lowers the chain length
- * TypeScript can handle before TS2589.
+ * changes.
+ *
+ * It is applied once, inside `ContextOf`, over a flat structure. That
+ * placement matters: wrapping a composition that *nests* per chained
+ * call (as the pre-#14 `Omit<Ctx, Name> & Record<Name, Out>` return
+ * did) bought the display but left the underlying stack, and cost ~5%
+ * extra instantiations for it.
  *
  * The trailing `& {}` is load-bearing: without it TypeScript keeps the
  * alias reference and prints `Simplify<...>` instead of the object.
@@ -72,6 +73,79 @@ export type Proxied<T> = Ref<T> &
  * match declaration order.
  */
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};
+
+/**
+ * One accumulated state's contribution to the context: the key its
+ * result lands at (`$.{key}`) and the type stored there.
+ *
+ * The builder carries these as a flat tuple rather than folding each
+ * one into the context as it goes — see {@link ContextOf}.
+ */
+export type StateEntry = readonly [key: string, output: unknown];
+
+/**
+ * The output recorded for `K` by the *last* entry that claims it.
+ *
+ * Scans from the right and stops at the first match, which is what
+ * makes a later state at the same key replace an earlier one rather
+ * than intersect with it. A stale `A & B` would let refs to the
+ * overwritten shape keep compiling after the data is gone.
+ */
+type LatestEntry<
+  E extends readonly StateEntry[],
+  K extends string,
+> = E extends readonly [
+  ...infer Rest extends readonly StateEntry[],
+  infer Last extends StateEntry,
+]
+  ? Last[0] extends K
+    ? Last[1]
+    : LatestEntry<Rest, K>
+  : never;
+
+/**
+ * The context a chain exposes: the starting type `Base`, with every
+ * accumulated entry applied over it.
+ *
+ * The shape here is the whole point. The obvious formulation folds each
+ * state into the context as the chain grows — `Omit<Ctx, Name> &
+ * Record<Name, Out>` — which makes `Ctx` at step N a mapped type
+ * wrapping the mapped type from step N-1. That stack costs `2^N` to
+ * resolve and hits TS2589 at 17 chained calls (#14).
+ *
+ * Mapping over a flat tuple instead never wraps a previous mapped type,
+ * so each materialization is one pass over N entries and the whole
+ * chain is quadratic: ~49k instantiations at 16 states against ~29.3M
+ * for the folded form, and no ceiling at 100.
+ *
+ * Keys of `Base` that an entry claims are dropped, so a state may
+ * shadow an input field (`.pass('key', …)` over `Base['key']`).
+ *
+ * `LatestEntry` scans the tuple per key, which makes one
+ * materialization quadratic and the whole chain cubic — the cost that
+ * remains after the exponent is gone. Two cheaper formulations were
+ * measured and rejected:
+ *
+ * - Key-remapping the entry union (`{ [K in E[number] as K[0]]: K[1] }`)
+ *   is ~24x faster by 48 states, but a union has no order: duplicate
+ *   keys merge into `A & B` instead of the later one winning, which is
+ *   precisely the guarantee `builder.test.ts` pins.
+ * - Dropping the superseded entry at append time would let the fast
+ *   form be used, but the filter runs over the previous filter's
+ *   result — nesting per link, which is the original bug in tuple
+ *   form. It reintroduced TS2589, at 48 states instead of 17.
+ *
+ * So the scan stays. In practice it is bounded by state count: 40
+ * states type-check in well under a second, against a hard failure at
+ * 17 before.
+ */
+export type ContextOf<Base, E extends readonly StateEntry[]> = Simplify<
+  {
+    [K in Exclude<keyof Base, E[number][0]>]: Base[K];
+  } & {
+    [K in E[number][0]]: LatestEntry<E, K>;
+  }
+>;
 
 /**
  * Any Zod object schema. Uses the `shape` property which is available

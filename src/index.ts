@@ -9,6 +9,8 @@ export type {
   RequireResultSelectorForOptionalOutputs,
   RequireNoOptionalOutputs,
   Simplify,
+  StateEntry,
+  ContextOf,
 } from './lib/types.js';
 export { createProxy, pathOf, isRef, createMapItemProxy } from './lib/proxy.js';
 export type { MapItemRef } from './lib/proxy.js';
@@ -53,6 +55,7 @@ export type {
   TimeoutConfig,
   WaitConfig,
   AslStateMachine,
+  AnyBuilder,
   InferContext,
   BranchInput,
   BranchOutputTuple,
