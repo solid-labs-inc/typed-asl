@@ -2,7 +2,7 @@
 
 These files are the documentation. Each is a runnable test, so nothing here can drift from the implementation — `npm test` proves every claim below still holds.
 
-Read them in order. Chapters 0–3 build the type-level primitives; 4 onwards is the public API.
+Read them in order. Chapters 0–3 build the type-level primitives; 4 onwards is the public API. They are also published as a browsable site at [solidlabs.com/docs/typed-asl](https://www.solidlabs.com/docs/typed-asl) — same chapters, same order.
 
 | #                               | Chapter           | What it covers                                                                         |
 | ------------------------------- | ----------------- | -------------------------------------------------------------------------------------- |

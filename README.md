@@ -1,5 +1,6 @@
 # typed-asl
 
+[![docs](https://img.shields.io/badge/docs-solidlabs.com-blue)](https://www.solidlabs.com/docs/typed-asl)
 [![CI](https://img.shields.io/github/actions/workflow/status/solid-labs-inc/typed-asl/ci.yml?branch=main&label=CI)](https://github.com/solid-labs-inc/typed-asl/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/codecov/c/github/solid-labs-inc/typed-asl?label=coverage)](https://codecov.io/gh/solid-labs-inc/typed-asl)
 [![npm](https://img.shields.io/npm/v/typed-asl)](https://www.npmjs.com/package/typed-asl)
@@ -50,6 +51,8 @@ Each method appends a state and returns the builder widened with that state's ou
 ## Learn it
 
 [`tutorial/`](tutorial) is the documentation: eleven numbered files that build the library's ideas from scratch, each one a runnable test. Start at [`00-the-problem.test.ts`](tutorial/00-the-problem.test.ts) and read in order. Because they are tests, they cannot drift from the implementation.
+
+The same eleven chapters are published at **[solidlabs.com/docs/typed-asl](https://www.solidlabs.com/docs/typed-asl)** if you would rather read them in a browser.
 
 ## Type machinery worth knowing
 

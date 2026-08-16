@@ -12,7 +12,7 @@ npm run typecheck
 
 1. Add or extend the builder method in `src/lib/builder.ts`.
 2. Cover the ASL output in `src/lib/builder.test.ts`, and the inference in the same file or `src/lib/types.test.ts`.
-3. If it changes how a user writes machines, add it to the relevant `tutorial/` chapter. The tutorial is the documentation, so a feature that isn't there is undocumented.
+3. If it changes how a user writes machines, add it to the relevant `tutorial/` chapter. The tutorial is the documentation, so a feature that isn't there is undocumented. Those chapters are also published at [solidlabs.com/docs/typed-asl](https://www.solidlabs.com/docs/typed-asl) — the files here are the source, so check the published page picked the change up.
 4. Update the **Scope** section of the README if it moves something out of the "not yet supported" list.
 
 Two things run automatically that are easy to miss:
