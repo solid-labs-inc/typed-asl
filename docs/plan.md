@@ -60,10 +60,10 @@ supply chain the badges implicitly vouch for.
   and a dip reads as abandonment), bundlephobia and packagephobia (both
   verified failing: upstream rate limit and a bot checkpoint), stars, and
   anything CI already proves (Prettier/ESLint/"types included").
-- **Four of the six are in the README; two are staged** — see the open
-  item below. A badge that renders `unknown` or `invalid repo path` is
-  worse than an absent one in a README whose subject is reliability, so
-  neither goes in before its data source is live.
+- **Five of the six are in the README; Scorecard is still staged** — see
+  the open item below. A badge that renders `unknown`, `invalid repo
+path`, or a weak score is worse than an absent one in a README whose
+  subject is reliability, so none goes in before it reads true.
 - The README's **How this is verified** section carries the real weight;
   the row is a summary of it. The coverage figure quoted there is the
   _threshold floor_, not the measured value, so it stays true as long as
@@ -80,25 +80,64 @@ supply chain the badges implicitly vouch for.
   nothing) and Socket.dev (its subject is dependency risk; there are no
   runtime dependencies).
 
-**Open — add the two staged badges** (S). Each is one line at the top of
-the README, blocked only on its data source going live:
+**Coverage badge: done.** `CODECOV_TOKEN` is set, the upload runs on the
+Node 22 leg, and the badge is in the README. One thing to know when
+reading it: Codecov reports **91%** where vitest reports 96% lines, from
+the identical lcov file. Codecov counts a partially-covered line as a
+miss (270 hits, 10 misses, 16 partials of 296); vitest counts it as hit.
+Neither is wrong, and the README says so, so nobody has to rediscover it.
+
+**Open — the OpenSSF Scorecard badge** (M). The workflow runs and
+publishes; the score is the problem, not the plumbing. First run on
+`5ade996` scored **5.4/10**:
+
+| Score | Checks                                                                                                        |
+| ----- | ------------------------------------------------------------------------------------------------------------- |
+| 10    | CI-Tests, License, Packaging, Token-Permissions, Dangerous-Workflow, Binary-Artifacts, Dependency-Update-Tool |
+| 8     | Vulnerabilities                                                                                               |
+| 7     | Pinned-Dependencies                                                                                           |
+| 3     | Contributors                                                                                                  |
+| 0     | Branch-Protection, Code-Review, Maintained, Security-Policy, SAST, Fuzzing, CII-Best-Practices                |
+| n/a   | Signed-Releases                                                                                               |
+
+Token-Permissions and Dangerous-Workflow at 10 are the M1-follow-up
+hardening being scored. **The badge stays out of the README until the
+score is defensible** — publishing 5.4 would cost more trust than the
+badge buys, which is the same reasoning that kept it out while it read
+`invalid repo path`.
+
+Worth fixing, in descending value per unit of effort:
+
+1. **Branch-Protection** (0) — `main` has no protection or rulesets.
+   Genuinely worth doing on its own merits; it also means the CI badge
+   is claiming something enforced. Note Scorecard cannot fully read
+   protection settings with the default `GITHUB_TOKEN`, so expect
+   partial credit rather than 10 unless a `repo`-scoped PAT is added —
+   which is not worth storing for a badge number.
+2. **Security-Policy** (0) — `SECURITY.md` added in this pass; needs
+   GitHub's private vulnerability reporting enabled for the link in it
+   to resolve.
+3. **Vulnerabilities** (8) — `npm audit fix` cleared the high-severity
+   `nanoid` advisory. One low-severity `esbuild` advisory remains,
+   reachable only through its dev server on Windows, which nothing here
+   runs. tsup and vite both pin `esbuild@^0.27`, so clearing it needs an
+   `overrides` entry forcing a breaking transitive bump. Deliberately
+   not done: the advisory is unreachable and dev-only.
+4. **Code-Review** (0) and **Maintained** (0) — structural for a
+   single-maintainer repo with a short history. Both improve on their
+   own as the repo ages; neither is worth gaming.
+5. **SAST** (0) — a CodeQL workflow is a cheap 10 points. Still declined:
+   it surfaces nothing in a pure-transform library with no IO, so adding
+   it would be points-chasing, which is the exact failure mode this
+   whole pass has been avoiding.
+
+Re-check with
+`curl -s https://api.securityscorecards.dev/projects/github.com/solid-labs-inc/typed-asl`
+and add the badge line once it clears roughly 7:
 
 ```markdown
-[![coverage](https://img.shields.io/codecov/c/github/solid-labs-inc/typed-asl?label=coverage)](https://codecov.io/gh/solid-labs-inc/typed-asl)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/solid-labs-inc/typed-asl?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/solid-labs-inc/typed-asl)
 ```
-
-- _Coverage_ needs `CODECOV_TOKEN` in the repo's Actions secrets (from
-  codecov.io after enabling the repo) plus one `main` run that uploads.
-  Until then the badge reads `coverage: unknown`. The CI upload step is
-  already wired and non-fatal, so nothing breaks while the token is
-  missing.
-- _Scorecard_ needs this branch merged — the workflow only triggers on
-  `main` — and then a run with `publish_results: true` landing in the
-  public OpenSSF dataset, which can lag by up to a day. Until then the
-  badge reads `invalid repo path`. Insert it after confirming
-  `https://api.securityscorecards.dev/projects/github.com/solid-labs-inc/typed-asl`
-  returns a score.
 
 ## M2 — Ergonomics and small states (0.3.0)
 
