@@ -1,0 +1,51 @@
+name: Scorecard
+
+# OpenSSF Scorecard grades this repo's supply-chain posture (pinned
+# actions, least-privilege tokens, branch protection, published
+# provenance) and publishes the result so the README badge and
+# scorecard.dev can read it.
+
+on:
+  # Scorecard reads branch-protection settings, so re-grade when they change.
+  branch_protection_rule:
+  schedule:
+    - cron: '31 6 * * 1'
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Uploads the SARIF result to the code-scanning dashboard.
+      security-events: write
+      # Signs the result so publish_results can attest where it came from.
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Required for the badge: publishes to the public dataset that
+          # api.securityscorecards.dev and shields.io read from.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3.37.7
+        with:
+          sarif_file: results.sarif

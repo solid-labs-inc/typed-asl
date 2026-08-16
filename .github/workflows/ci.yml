@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Default-deny at the workflow level; jobs opt into anything more.
+# Actions are pinned to commit SHAs (dependabot's github-actions ecosystem
+# bumps them and rewrites the trailing version comment).
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,8 +19,10 @@ jobs:
       matrix:
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -29,6 +37,17 @@ jobs:
         if: matrix.node != 22
       - run: npm run test:coverage
         if: matrix.node == 22
+      # Reporting only. The ratchet in vitest.config.ts is what gates a
+      # merge, so a Codecov outage can never turn a red build green — and
+      # never fails the build on its own (fail_ci_if_error: false).
+      - name: Upload coverage to Codecov
+        if: matrix.node == 22
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       - run: npm run build
 
   # The library's behavior is substantially type-level, so a compiler
@@ -44,8 +63,10 @@ jobs:
       matrix:
         typescript: ['^5', 'latest']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
