@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-16
+
+Documentation only — no runtime, type-level or packaging changes.
+
+### Changed
+
+- The tutorial chapters are now published at
+  [solidlabs.com/docs/typed-asl](https://www.solidlabs.com/docs/typed-asl),
+  and the README, the tutorial index and the contributing checklist link
+  there. The files in `tutorial/` remain the source.
+- `homepage` in `package.json` points at the docs site rather than the
+  README anchor, so npm's Homepage link lands on the documentation.
+  `repository` and `bugs` are unchanged. This is the reason for the
+  release: npm serves that metadata from the published tarball, so it
+  cannot change without one. ([#18](https://github.com/solid-labs-inc/typed-asl/pull/18))
+
 ## [0.4.0] - 2026-08-16
 
 ### Fixed
@@ -224,7 +240,8 @@ Initial extraction from the Stellar monorepo. Never published to npm.
 - Intrinsics: `statesFormat`, `statesJsonToString`, `statesMathAdd`.
 - Runnable tutorial (`tutorial/00`–`10`) doubling as the documentation.
 
-[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/solid-labs-inc/typed-asl/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/solid-labs-inc/typed-asl/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/solid-labs-inc/typed-asl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/solid-labs-inc/typed-asl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/solid-labs-inc/typed-asl/releases/tag/v0.2.0
