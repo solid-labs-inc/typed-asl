@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # The compiler is pinned (~5.7) on purpose: type-level behavior is the
+    # library's API surface, and the CI typecheck-matrix already covers
+    # newer compilers. Zod is a peer dependency; its range is a deliberate
+    # compatibility statement, not something to auto-bump.
+    ignore:
+      - dependency-name: typescript
+      - dependency-name: zod
+    groups:
+      dev-dependencies:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
