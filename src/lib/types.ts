@@ -49,6 +49,31 @@ export type Proxied<T> = Ref<T> &
       : unknown);
 
 /**
+ * Flatten an intersection into a single object type, for display.
+ *
+ * Every context-widening builder method composes its result as
+ * `Omit<Ctx, Name> & Record<Name, Out>` — the `Omit` is what makes a
+ * repeated state name replace its earlier entry instead of intersecting
+ * with it. Unwrapped, that composition is what hover shows, and it
+ * nests once per chained call, so reading `ctx` off a five-task chain
+ * means evaluating five layers of `Omit`/`Record` by hand.
+ *
+ * This mapped type resolves the intersection to its properties. The
+ * result is mutually assignable with the input — only the rendering
+ * changes. It is not free: resolving eagerly at each step costs ~8-13%
+ * more instantiations on a 5-15 state chain (within noise on this
+ * repo's own suite), and it neither raises nor lowers the chain length
+ * TypeScript can handle before TS2589.
+ *
+ * The trailing `& {}` is load-bearing: without it TypeScript keeps the
+ * alias reference and prints `Simplify<...>` instead of the object.
+ *
+ * Property order follows the mapped type's iteration, so it need not
+ * match declaration order.
+ */
+export type Simplify<T> = { [K in keyof T]: T[K] } & {};
+
+/**
  * Any Zod object schema. Uses the `shape` property which is available
  * on all ZodObject instances in both Zod 3 and Zod 4.
  */

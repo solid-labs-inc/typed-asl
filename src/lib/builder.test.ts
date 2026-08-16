@@ -4261,7 +4261,10 @@ describe('customTask context typing', () => {
     });
 
     expectTypeOf(b).toEqualTypeOf<
-      SequenceBuilder<Ctx & Record<'job', Record<string, unknown>>>
+      SequenceBuilder<{
+        parentVideoId: string;
+        job: Record<string, unknown>;
+      }>
     >();
   });
 

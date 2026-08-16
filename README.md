@@ -55,6 +55,8 @@ Each method appends a state and returns the builder widened with that state's ou
 
 **Parallel branches are a tuple, not an array.** A Parallel state's ASL output is positional, and a plain `Array<Union>` would lose that. `BranchOutputTuple` is a mapped tuple (`{ [I in keyof Branches]: Omit<Full, keyof Base> }`), which preserves per-index types, so `ctx.process[0]` is branch 0's own output. Two things keep it working: the `[...Branches]` variadic tuple parameter (without it TypeScript infers `SequenceBuilder<any>[]`) and each builder's `declare readonly _ctx: Ctx` phantom field, which is what `infer` extracts.
 
+**The context type hovers as a plain object.** Widening a state's output into the context is written `Omit<Ctx, Name> & Record<Name, Out>` — the `Omit` is what makes a repeated state name replace its earlier entry instead of intersecting with it. Left alone, that composition is what your editor prints, nesting a layer deeper per chained call. Every widening return is wrapped in `Simplify<T> = { [K in keyof T]: T[K] } & {}`, which resolves it to `{ bucket: string; key: string; loadFile: … }` no matter how long the chain. Assignability is unchanged; only the rendering is. One consequence: keys appear in the mapped type's iteration order, not declaration order.
+
 **`choice` leaves the context type unchanged** — the builder can't know which branch ran. Non-terminal branches converge on the next chained state, `fail` states stay terminal, empty branches skip straight to convergence, and choices nest.
 
 **`pipe(fn)` keeps reusable task groups in a flat chain.** Declare the function generic over `Ctx extends { … }` and the constraint becomes its documented requirement on upstream outputs:

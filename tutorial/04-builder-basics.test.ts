@@ -151,8 +151,15 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
       }),
     );
 
-    // After loadFile, the builder's context type is:
-    //   Input & { loadFile: { fileUpload: { id: string; filename: string } } }
+    // After loadFile, the builder's context type is — and hovering it
+    // shows, character for character:
+    //   { bucket: string; key: string;
+    //     loadFile: { fileUpload: { id: string; filename: string } } }
+    //
+    // Not the `Omit<Input, 'loadFile'> & Record<'loadFile', …>` the
+    // widening is written as. The `Omit` is what makes a repeated state
+    // name replace its earlier entry, and it stays; `Simplify` resolves
+    // the composition to a plain object before it reaches your editor.
     type CtxAfterLoad = typeof builder._ctx;
     expectTypeOf<CtxAfterLoad>().toHaveProperty('bucket');
     expectTypeOf<CtxAfterLoad>().toHaveProperty('key');

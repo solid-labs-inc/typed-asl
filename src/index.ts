@@ -8,6 +8,7 @@ export type {
   OptionalOutputKeys,
   RequireResultSelectorForOptionalOutputs,
   RequireNoOptionalOutputs,
+  Simplify,
 } from './lib/types.js';
 export { createProxy, pathOf, isRef, createMapItemProxy } from './lib/proxy.js';
 export type { MapItemRef } from './lib/proxy.js';

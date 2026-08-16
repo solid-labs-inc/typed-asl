@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The accumulated context type now hovers as a plain object. Every
+  context-widening return (`task`, `pass`, `map`, `parallel`,
+  `customTask`, `choice`'s `Adds` overload) is wrapped in a new
+  display-only `Simplify<T> = { [K in keyof T]: T[K] } & {}`, so a
+  three-task chain reads
+  `{ key: string; bucket: string; loadFile: …; second: …; third: … }`
+  instead of three nested `Omit`/`Record` layers. The same wrapping
+  resolves the `UnwrapRefs<…>` alias that `pass` and `resultSelector`
+  left on the surface. Assignability is unchanged — the `Omit` that
+  makes a repeated state name replace its earlier entry stays, and
+  removing the class's `in out` variance annotation still fails to
+  compile. Two consequences worth knowing: keys render in the mapped
+  type's iteration order rather than declaration order, and
+  `CatchConfig`'s handler parameter is deliberately left unwrapped
+  (with `Key` unresolved, `Record<Key, …>` is an index signature that
+  flattening would merge into every property). Type-checking cost is
+  within noise on the repo's own suite and +8–13% instantiations on
+  synthetic 5–15 state chains, with no change to the chain length
+  TypeScript can handle. ([#12](https://github.com/solid-labs-inc/typed-asl/issues/12))
+
 ## [0.3.0] - 2026-08-16
 
 ### Added
