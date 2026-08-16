@@ -49,6 +49,111 @@ land silently.
 - TypeScript 7.0 is stable; the matrix runs `^5` and `latest` (the pinned
   `~5.7.2` is covered by the build job's own typecheck).
 
+### M1 follow-up: publishing the evidence (August 2026)
+
+M1 produced the guarantees; this pass made them visible and hardened the
+supply chain the badges implicitly vouch for.
+
+- Badge row settled at six, all machine-checked: CI, coverage, npm
+  version, npm provenance, zero runtime dependencies, OpenSSF Scorecard.
+  Deliberately excluded — download counts (volatile on a young package,
+  and a dip reads as abandonment), bundlephobia and packagephobia (both
+  verified failing: upstream rate limit and a bot checkpoint), stars, and
+  anything CI already proves (Prettier/ESLint/"types included").
+- **Five of the six are in the README; Scorecard is deferred** — see the
+  decision below. A badge that renders `unknown`, `invalid repo path`, or
+  a weak score is worse than an absent one in a README whose subject is
+  reliability, so none goes in before it reads true.
+- The README's **How this is verified** section carries the real weight;
+  the row is a summary of it. The coverage figure quoted there is the
+  _threshold floor_, not the measured value, so it stays true as long as
+  the ratchet holds and only ever understates.
+- Codecov is reporting only — `codecov.yml` marks both statuses
+  informational and the upload runs with `fail_ci_if_error: false`.
+  Enforcement stays in `vitest.config.ts`, so a third-party outage cannot
+  block a merge or turn a red build green.
+- All actions are SHA-pinned with a trailing version comment, workflows
+  declare default-deny `permissions`, and checkouts use
+  `persist-credentials: false`. Dependabot's github-actions ecosystem
+  bumps the pins and rewrites the comments, so this does not rot.
+- Not adopted: CodeQL (a pure-transform library with no IO surfaces
+  nothing) and Socket.dev (its subject is dependency risk; there are no
+  runtime dependencies).
+
+**Coverage badge: done.** `CODECOV_TOKEN` is set, the upload runs on the
+Node 22 leg, and the badge is in the README. One thing to know when
+reading it: Codecov reports **91%** where vitest reports 96% lines, from
+the identical lcov file. Codecov counts a partially-covered line as a
+miss (270 hits, 10 misses, 16 partials of 296); vitest counts it as hit.
+Neither is wrong, and the README says so, so nobody has to rediscover it.
+
+**Deferred — the OpenSSF Scorecard badge.** The workflow is in place and
+publishing; the badge is deliberately not in the README. Decision made
+August 2026 at a score of **6.5/10** on `00a888d`, after working the
+score up from 5.4 and concluding the remaining distance is not worth
+buying.
+
+| Score | Checks                                                                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 10    | CI-Tests, License, Packaging, Security-Policy, Token-Permissions, Dangerous-Workflow, Binary-Artifacts, Dependency-Update-Tool |
+| 9     | Vulnerabilities                                                                                                                |
+| 7     | Pinned-Dependencies                                                                                                            |
+| 3     | Contributors                                                                                                                   |
+| 0     | Code-Review, Maintained, SAST, Fuzzing, CII-Best-Practices                                                                     |
+| n/a   | Branch-Protection, Signed-Releases                                                                                             |
+
+What moved and what didn't, so this isn't re-derived later:
+
+- **Token-Permissions and Dangerous-Workflow at 10** are the SHA pinning
+  and default-deny permissions being scored. That hardening was worth
+  doing on its own merits and remains the real payoff of this pass.
+- **Branch-Protection reads `n/a`, not 10.** `main` _is_ protected —
+  required status checks, no force-pushes, no deletions — but Scorecard
+  cannot read protection settings with the default `GITHUB_TOKEN`, so it
+  returns inconclusive. The 5.4 → 5.9 bump on applying protection was an
+  artifact of an inconclusive check leaving the weighted average, not
+  credit earned. Full credit needs a `repo`-scoped PAT in secrets;
+  storing a broad token to move a badge number is a bad trade.
+- **Signed-Releases reads `n/a`** because the check looks for signed
+  GitHub release artifacts. Releases here are npm tarballs with OIDC
+  provenance, which the check does not inspect. The README states that
+  guarantee directly instead.
+- **Code-Review (0) and Maintained (0)** are structural, not fixable.
+  Code-Review wants approving reviews on recent commits; a single
+  maintainer cannot self-approve. Maintained wants sustained commit
+  history — the repo has been on GitHub since 2026-08-06. Maintained
+  improves on its own with time; Code-Review does not, short of adding a
+  second reviewer.
+- **SAST (0) declined.** A CodeQL workflow is a cheap 10 points and
+  surfaces nothing in a pure-transform library with no IO. Adding it
+  would be points-chasing.
+- **Vulnerabilities (9)** — one low-severity `esbuild` advisory,
+  reachable only via its dev server on Windows, which nothing here runs.
+  `tsup` and `vite` both pin `esbuild@^0.27`, so clearing it needs an
+  `overrides` forcing a breaking transitive bump. Not worth it.
+
+The realistic ceiling without gaming the metric is therefore around 7,
+held down by two zeros that reflect the repo being young and
+single-maintainer rather than anything unsafe. A mid-6 badge reads as
+"weak security posture" to exactly the reader it is aimed at, so it
+stays out — the same standard that kept it out at `invalid repo path`
+and kept the coverage badge out at `unknown`.
+
+Revisit if the repo gains a second regular reviewer (Code-Review) or
+after enough sustained history to move Maintained. The workflow keeps
+running either way, so the score stays observable at
+`https://scorecard.dev/viewer/?uri=github.com/solid-labs-inc/typed-asl`
+without the README vouching for it. Badge line, if it ever earns one:
+
+```markdown
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/solid-labs-inc/typed-asl?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/solid-labs-inc/typed-asl)
+```
+
+**Still worth doing, independent of the badge** (S): enable GitHub's
+private vulnerability reporting, so the "Report a vulnerability" link in
+`SECURITY.md` resolves, and Dependabot security updates. Both are repo
+settings, currently disabled.
+
 ## M2 — Ergonomics and small states (0.3.0)
 
 Each item is independently shippable; 0.3.0 cuts when they're all in.

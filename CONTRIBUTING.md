@@ -30,4 +30,5 @@ The claims in the README's "Caught at compile time" list are pinned by `src/lib/
 
 - Prettier formats everything: `npm run format`.
 - Commit subjects are `type(scope): imperative summary`.
+- GitHub Actions are pinned to commit SHAs with a trailing `# vX.Y.Z` comment, never to a moving tag. Dependabot bumps them and rewrites the comment; if you add a step, pin it the same way or the Scorecard check regresses.
 - Please open an issue before a large feature, so we can agree on the API shape first. The public surface is small on purpose.
