@@ -1152,8 +1152,7 @@ describe('SequenceBuilder type safety', () => {
     expect(builder).toBeDefined();
 
     // After two tasks, the builder's context should include both outputs
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     // Original context fields
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -1292,8 +1291,7 @@ describe('SequenceBuilder type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     // Original context preserved
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -1379,8 +1377,7 @@ describe('SequenceBuilder type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     expectTypeOf<ResultCtx>().toHaveProperty('filterOutput');
     // Ref fields are unwrapped to their underlying types
@@ -1900,8 +1897,7 @@ describe('pipe', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     expectTypeOf<ResultCtx>().toHaveProperty('loadFileUpload');
     expectTypeOf<ResultCtx>().toHaveProperty('createVideo');
@@ -2866,8 +2862,7 @@ describe('choice/fail type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
   });
@@ -2881,8 +2876,7 @@ describe('choice/fail type safety', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     expectTypeOf<ResultCtx>().toEqualTypeOf<Ctx>();
   });
@@ -3004,8 +2998,7 @@ describe('pass with Result literal', () => {
 
     expect(builder).toBeDefined();
 
-    type ResultCtx =
-      typeof builder extends SequenceBuilder<infer C> ? C : never;
+    type ResultCtx = InferContext<typeof builder>;
 
     // Original context preserved
     expectTypeOf<ResultCtx>().toHaveProperty('bucket');
@@ -4239,6 +4232,23 @@ describe('customTask context typing', () => {
     // data was overwritten.
     type After = InferContext<typeof b>;
     expectTypeOf<After['job']>().toEqualTypeOf<{ newField: number }>();
+  });
+
+  it('a state may shadow a key of the starting context', () => {
+    // The other thing the old `Omit<Ctx, Name>` bought, and the reason
+    // `ContextOf` excludes claimed keys from the base instead of
+    // intersecting: a state whose key collides with an input field
+    // replaces it. Intersecting would give `string & { parsed: … }`,
+    // which is not what lands in the state data.
+    const b = new SequenceBuilder<{ key: string; bucket: string }>().pass(
+      'key',
+      () => ({ parsed: 1 }),
+    );
+
+    type After = InferContext<typeof b>;
+    expectTypeOf<After['key']>().toEqualTypeOf<{ parsed: number }>();
+    // Unclaimed keys of the starting context are untouched.
+    expectTypeOf<After['bucket']>().toEqualTypeOf<string>();
   });
 
   it('without resultPath, the result replaces the whole input', () => {

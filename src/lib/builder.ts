@@ -6,14 +6,43 @@ import type { MapItemRef } from './proxy.js';
 import { createMapItemProxy, createProxy, isRef, pathOf } from './proxy.js';
 import type {
   AnyZodObject,
+  ContextOf,
   ExactPayload,
   Proxied,
   Ref,
   RequireNoOptionalOutputs,
   RequireResultSelectorForOptionalOutputs,
   Simplify,
+  StateEntry,
   TypedPayloadMapping,
 } from './types.js';
+
+/**
+ * The builder a context-widening call returns: `Out` recorded at `Key`,
+ * appended to the flat entry tuple rather than folded into the context.
+ *
+ * Appending to a tuple is cheap and, crucially, does not wrap the
+ * previous step's type — which is what the old
+ * `Omit<Ctx, Key> & Record<Key, Out>` return did once per chained call,
+ * costing `2^N` to resolve and capping chains at 17 (#14).
+ */
+type Widened<
+  Base,
+  E extends readonly StateEntry[],
+  Key extends string,
+  Out,
+> = SequenceBuilder<
+  ContextOf<Base, [...E, [Key, Out]]>,
+  Base,
+  [...E, [Key, Out]]
+>;
+
+/**
+ * The builder a context-*replacing* call returns (`resultPath: null`,
+ * or a `customTask` with no `resultPath`): the result becomes the whole
+ * state data, so the chain re-anchors on a fresh base with no entries.
+ */
+type Rebased<Ctx> = SequenceBuilder<Simplify<Ctx>, Simplify<Ctx>, []>;
 
 // ── Retry presets ───────────────────────────────────────────────────
 
@@ -132,6 +161,18 @@ export type UnwrapRefs<M> = {
 };
 
 /**
+ * Any builder, whatever it has accumulated.
+ *
+ * For positions that only require *a* builder — branch inputs, catch
+ * and choice handlers, internal storage. The trailing parameters must
+ * be left open: they carry accumulation state, so pinning them (as
+ * plain `SequenceBuilder<any>` does, defaulting them from the first
+ * argument) stops a chain that has appended states from matching.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyBuilder = SequenceBuilder<any, any, any>;
+
+/**
  * Extract the accumulated context type from a SequenceBuilder.
  *
  * @example
@@ -144,9 +185,10 @@ export type UnwrapRefs<M> = {
  * // = { bucket: string; runMediaInfo: MediaInfoOutput; createVideo: VideoOutput }
  * ```
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type InferContext<B extends SequenceBuilder<any>> =
-  B extends SequenceBuilder<infer Ctx> ? Ctx : never;
+
+export type InferContext<B extends AnyBuilder> = B extends { _ctx: infer Ctx }
+  ? Ctx
+  : never;
 
 /**
  * A single `parallel` branch: either a prebuilt builder, or a factory
@@ -155,10 +197,7 @@ export type InferContext<B extends SequenceBuilder<any>> =
  * the chain automatically instead of repeating `new SequenceBuilder<Ctx>()`.
  */
 export type BranchInput<Ctx> =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | SequenceBuilder<any>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | ((b: SequenceBuilder<Ctx>) => SequenceBuilder<any>);
+  AnyBuilder | ((b: SequenceBuilder<Ctx>) => AnyBuilder);
 
 /**
  * Given a tuple of branches (builders or factories — see `BranchInput`),
@@ -183,16 +222,15 @@ export type BranchOutputTuple<
   // `readonly BranchInput<X>[]` would trip function-parameter
   // contravariance when X varies, but `(b: never) => ...` accepts every
   // factory for the same reason — so the constraint stays precise.
-  Branches extends readonly (
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    | SequenceBuilder<any>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    | ((b: never) => SequenceBuilder<any>)
-  )[],
+  Branches extends readonly (AnyBuilder | ((b: never) => AnyBuilder))[],
 > = {
-  [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
+  // Matched on the `_ctx` phantom rather than on the class and its type
+  // parameters: a builder that has appended states carries accumulation
+  // state in the trailing parameters, which a `SequenceBuilder<infer C>`
+  // pattern would fail to match.
+  [I in keyof Branches]: Branches[I] extends { _ctx: infer Full }
     ? Full
-    : Branches[I] extends (b: never) => SequenceBuilder<infer Full>
+    : Branches[I] extends (b: never) => { _ctx: infer Full }
       ? Full
       : never;
 };
@@ -247,7 +285,8 @@ export interface MapConfig<
    */
   processor: (
     b: SequenceBuilder<Simplify<UnwrapRefs<S>>>,
-  ) => SequenceBuilder<ProcessorCtx>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ) => SequenceBuilder<ProcessorCtx, any, any>;
 }
 
 /**
@@ -372,15 +411,14 @@ export interface CatchConfig<Ctx, Key extends string = never> {
   // Returns don't have that problem: `Key` is always resolved by then.
   handler: (
     b: SequenceBuilder<Ctx & Record<Key, AslCatchErrorOutput>>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ) => SequenceBuilder<any>;
+  ) => AnyBuilder;
 }
 
 interface CatchEntry {
   errorEquals: string[];
   resultPath?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  builder: SequenceBuilder<any>;
+
+  builder: AnyBuilder;
 }
 
 // ── Choice types ────────────────────────────────────────────────────
@@ -394,8 +432,8 @@ const CHOICE_MARKER: unique symbol = Symbol('choice');
  */
 export interface ChoiceBranch<Ctx> {
   when: ChoiceCondition;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  then: (b: SequenceBuilder<Ctx>) => SequenceBuilder<any>;
+
+  then: (b: SequenceBuilder<Ctx>) => AnyBuilder;
 }
 
 /**
@@ -405,18 +443,18 @@ export interface ChoiceBranch<Ctx> {
  */
 export interface ChoiceConfig<Ctx> {
   choices: ChoiceBranch<Ctx>[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default?: (b: SequenceBuilder<Ctx>) => SequenceBuilder<any>;
+
+  default?: (b: SequenceBuilder<Ctx>) => AnyBuilder;
 }
 
 interface ChoiceBlock {
   branches: {
     condition: Record<string, unknown>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    builder: SequenceBuilder<any>;
+
+    builder: AnyBuilder;
   }[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  defaultBuilder?: SequenceBuilder<any>;
+
+  defaultBuilder?: AnyBuilder;
 }
 
 // ── SequenceBuilder ─────────────────────────────────────────────────
@@ -453,14 +491,27 @@ interface ChoiceBlock {
  *   .build();
  * ```
  */
-// `in out`: the context is consumed (payload callbacks) and produced
-// (the `_ctx` phantom), so the class is invariant — declared explicitly
-// because the `Simplify<Omit<Ctx, Key> & …>` method returns put
-// `keyof Ctx` on the surface, which defeats structural variance
-// measurement and would otherwise break even `SequenceBuilder<Ctx>` →
-// `SequenceBuilder<any>`. Still verified load-bearing after the
-// `Simplify` wrapping: dropping it fails to compile.
-export class SequenceBuilder<in out Ctx> {
+// `in out` on `Ctx`: the context is consumed (payload callbacks) and
+// produced (the `_ctx` phantom), so the class is invariant — declared
+// explicitly because the mapped-type method returns put `keyof Ctx` on
+// the surface, which defeats structural variance measurement and would
+// otherwise break even `SequenceBuilder<Ctx>` → `SequenceBuilder<any>`.
+// Verified load-bearing: dropping it fails to compile.
+//
+// `Base` and `E` are inference state, not part of a builder's identity.
+// `Ctx` is always `ContextOf<Base, E>`, so it already says everything
+// the two of them say; carrying them separately is what lets the next
+// call append to a flat tuple instead of folding the context again (see
+// `ContextOf`). They are deliberately absent from every property — only
+// `_ctx` is declared — so assignability compares builders on their
+// context alone. That is what keeps `SequenceBuilder<SomeCtx>` usable
+// as an annotation and keeps single-type-parameter `pipe` helpers
+// (`<C>(b: SequenceBuilder<C>) => …`) matching an accumulated chain.
+export class SequenceBuilder<
+  in out Ctx,
+  Base = Ctx,
+  E extends readonly StateEntry[] = [],
+> {
   /** @internal Type-level only — does not exist at runtime. */
   declare readonly _ctx: Ctx;
 
@@ -518,10 +569,20 @@ export class SequenceBuilder<in out Ctx> {
    *   .build();
    * ```
    */
+  // The parameter is `SequenceBuilder<Ctx>` — one type argument, the
+  // form helpers are written with. The *return* is deliberately loose
+  // (`any, any`): a helper that appends states hands back a builder
+  // carrying its own accumulated entries, which would not match a
+  // pinned `SequenceBuilder<NewCtx, NewCtx, []>`. Only `NewCtx` is
+  // inferred from it, and `pipe` re-anchors on that — a seam, which is
+  // exactly what keeps a long chain flat.
   pipe<NewCtx>(
-    fn: (builder: SequenceBuilder<Ctx>) => SequenceBuilder<NewCtx>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    fn: (builder: SequenceBuilder<Ctx>) => SequenceBuilder<NewCtx, any, any>,
   ): SequenceBuilder<NewCtx> {
-    return fn(this);
+    return fn(
+      this as unknown as SequenceBuilder<Ctx>,
+    ) as SequenceBuilder<NewCtx>;
   }
 
   /**
@@ -557,7 +618,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Simplify<UnwrapRefs<R>>>;
+  ): Rebased<UnwrapRefs<R>>;
 
   /**
    * Overload: `resultPath: null` without `resultSelector` — the full Lambda
@@ -576,7 +637,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<z.infer<O>>;
+  ): Rebased<z.infer<O>>;
 
   /**
    * Overload: with `resultSelector` — a typed mapping function that remaps
@@ -598,9 +659,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<
-    Simplify<Omit<Ctx, Name> & Record<Name, Simplify<UnwrapRefs<R>>>>
-  >;
+  ): Widened<Base, E, Name, Simplify<UnwrapRefs<R>>>;
 
   /**
    * Overload: without `resultSelector` — auto-generates a 1:1 mapping from
@@ -618,7 +677,7 @@ export class SequenceBuilder<in out Ctx> {
       catch?: CatchConfig<Ctx, CatchKey>[];
     } & RequireResultSelectorForOptionalOutputs<O>,
     payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
-  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, z.infer<O>>>>;
+  ): Widened<Base, E, Name, z.infer<O>>;
 
   task(
     name: string,
@@ -727,9 +786,7 @@ export class SequenceBuilder<in out Ctx> {
     name: Name,
     branches: [...Branches],
     options?: { retry?: RetryConfig[]; catch?: CatchConfig<Ctx, CatchKey>[] },
-  ): SequenceBuilder<
-    Simplify<Omit<Ctx, Name> & Record<Name, BranchOutputTuple<Ctx, Branches>>>
-  >;
+  ): Widened<Base, E, Name, BranchOutputTuple<Ctx, Branches>>;
 
   parallel(
     name: string,
@@ -795,9 +852,7 @@ export class SequenceBuilder<in out Ctx> {
   pass<Name extends string, M extends Record<string, unknown>>(
     name: Name,
     mappingFn: (ctx: Proxied<Ctx>) => M,
-  ): SequenceBuilder<
-    Simplify<Omit<Ctx, Name> & Record<Name, Simplify<UnwrapRefs<M>>>>
-  >;
+  ): Widened<Base, E, Name, Simplify<UnwrapRefs<M>>>;
 
   /**
    * Append a Pass state that injects a literal value at a given path.
@@ -817,7 +872,7 @@ export class SequenceBuilder<in out Ctx> {
   pass<R, Key extends string>(
     name: string,
     config: { result: R; resultPath: `$.${Key}` & ResultPathKeyCheck<Key> },
-  ): SequenceBuilder<Simplify<Omit<Ctx, Key> & Record<Key, R>>>;
+  ): Widened<Base, E, Key, R>;
 
   pass(
     name: string,
@@ -876,7 +931,7 @@ export class SequenceBuilder<in out Ctx> {
   wait(
     name: string,
     config: WaitConfig | ((ctx: Proxied<Ctx>) => WaitConfig),
-  ): SequenceBuilder<Ctx> {
+  ): SequenceBuilder<Ctx, Base, E> {
     const resolved =
       typeof config === 'function' ? config(createProxy<Ctx>()) : config;
     const c = resolved as {
@@ -963,7 +1018,7 @@ export class SequenceBuilder<in out Ctx> {
       items: (ctx: Proxied<Ctx>) => Ref<readonly ItemType[]>;
       itemsPath?: undefined;
     },
-  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
+  ): Widened<Base, E, Name, ProcessorCtx[]>;
 
   /**
    * Overload: `itemsPath` is a string literal — `ItemType` inferred by
@@ -987,7 +1042,7 @@ export class SequenceBuilder<in out Ctx> {
       itemsPath: ItemsPath;
       items?: undefined;
     },
-  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
+  ): Widened<Base, E, Name, ProcessorCtx[]>;
 
   map<
     Name extends string,
@@ -998,7 +1053,7 @@ export class SequenceBuilder<in out Ctx> {
   >(
     name: Name,
     config: MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey>,
-  ): SequenceBuilder<Simplify<Omit<Ctx, Name> & Record<Name, ProcessorCtx[]>>>;
+  ): Widened<Base, E, Name, ProcessorCtx[]>;
 
   map(
     name: string,
@@ -1014,7 +1069,7 @@ export class SequenceBuilder<in out Ctx> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       itemSelector: (item: any, ctx: any) => Record<string, unknown>;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      processor: (b: any) => SequenceBuilder<any>;
+      processor: (b: any) => AnyBuilder;
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
@@ -1126,7 +1181,7 @@ export class SequenceBuilder<in out Ctx> {
       resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
       outputSchema: OSchema;
     } & RequireNoOptionalOutputs<OSchema>,
-  ): SequenceBuilder<Simplify<Omit<Ctx, Key> & Record<Key, z.infer<OSchema>>>>;
+  ): Widened<Base, E, Key, z.infer<OSchema>>;
 
   /** Overload: `resultPath` only — untyped result at `ctx.{key}`. */
   customTask<Key extends string, CatchKey extends string = never>(
@@ -1135,9 +1190,7 @@ export class SequenceBuilder<in out Ctx> {
       resultPath: `$.${Key}` & ResultPathKeyCheck<Key>;
       outputSchema?: undefined;
     },
-  ): SequenceBuilder<
-    Simplify<Omit<Ctx, Key> & Record<Key, Record<string, unknown>>>
-  >;
+  ): Widened<Base, E, Key, Record<string, unknown>>;
 
   /** Overload: no `resultPath` — the typed output replaces the input. */
   customTask<OSchema extends AnyZodObject, CatchKey extends string = never>(
@@ -1146,7 +1199,7 @@ export class SequenceBuilder<in out Ctx> {
       resultPath?: undefined;
       outputSchema: OSchema;
     } & RequireNoOptionalOutputs<OSchema>,
-  ): SequenceBuilder<z.infer<OSchema>>;
+  ): Rebased<z.infer<OSchema>>;
 
   /** Overload: no `resultPath`, no schema — untyped replacement. */
   customTask<CatchKey extends string = never>(
@@ -1155,7 +1208,7 @@ export class SequenceBuilder<in out Ctx> {
       resultPath?: undefined;
       outputSchema?: undefined;
     },
-  ): SequenceBuilder<Record<string, unknown>>;
+  ): Rebased<Record<string, unknown>>;
 
   customTask(
     name: string,
@@ -1231,7 +1284,7 @@ export class SequenceBuilder<in out Ctx> {
   choice(
     name: string,
     configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
-  ): SequenceBuilder<Ctx>;
+  ): SequenceBuilder<Ctx, Base, E>;
 
   /**
    * Assert that all branches of the choice produce common fields.
@@ -1251,7 +1304,7 @@ export class SequenceBuilder<in out Ctx> {
   choice<Adds>(
     name: string,
     configFn: (ctx: Proxied<Ctx>) => ChoiceConfig<Ctx>,
-  ): SequenceBuilder<Simplify<Ctx & Adds>>;
+  ): Rebased<Ctx & Adds>;
 
   choice(
     name: string,
@@ -1298,7 +1351,7 @@ export class SequenceBuilder<in out Ctx> {
   fail(
     name: string,
     config: { error?: string; cause?: string },
-  ): SequenceBuilder<Ctx> {
+  ): SequenceBuilder<Ctx, Base, E> {
     const state: Record<string, unknown> = { Type: 'Fail' };
     if (config.error !== undefined) state['Error'] = config.error;
     if (config.cause !== undefined) state['Cause'] = config.cause;
@@ -1326,7 +1379,7 @@ export class SequenceBuilder<in out Ctx> {
    * }))
    * ```
    */
-  succeed(name: string): SequenceBuilder<Ctx> {
+  succeed(name: string): SequenceBuilder<Ctx, Base, E> {
     return this.append<Ctx>(name, { Type: 'Succeed' });
   }
 
