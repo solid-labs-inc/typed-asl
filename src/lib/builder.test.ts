@@ -7,6 +7,7 @@ import {
   THROTTLE_RETRY,
   type InferContext,
   type MapConfig,
+  type ResultPathKeyCheck,
   type RetryConfig,
 } from './builder.js';
 import { serializeCondition } from './choice.js';
@@ -4294,13 +4295,13 @@ describe('resultPath key guard on pass and catch', () => {
   type Ctx = { bucket: string };
 
   it('pass literal-result overload rejects nested resultPath', () => {
-    expect(() =>
-      // @ts-expect-error — nested resultPath desyncs the context type
-      new SequenceBuilder<Ctx>().pass('setFlag', {
-        result: true,
-        resultPath: '$.flags.done',
-      }),
-    ).toThrow('must be "$.{key}"');
+    // Compile-time half, asserted on the type directly — overload-error
+    // anchor positions differ between compiler generations (TS 5.7 pins
+    // the call, TS 7 pins the property), so a @ts-expect-error on the
+    // full call is not version-stable.
+    expectTypeOf<ResultPathKeyCheck<'flags'>>().toEqualTypeOf<'$.flags'>();
+    expectTypeOf<ResultPathKeyCheck<'flags.done'>>().toEqualTypeOf<never>();
+    expectTypeOf<ResultPathKeyCheck<'flags[0]'>>().toEqualTypeOf<never>();
 
     expect(() =>
       new SequenceBuilder<Ctx>().pass('setFlag', {
