@@ -7,31 +7,39 @@ import type { Ref } from './types.js';
 export type ChoiceVariable = Ref<unknown> | string;
 
 /**
+ * The variable side of a typed comparison: a ref whose type agrees with
+ * the operator (`null`/`undefined` admitted, since nullable fields are
+ * exactly what conditions inspect), or a raw JSONPath string as the
+ * escape hatch.
+ */
+export type ChoiceVariableOf<T> = Ref<T | null | undefined> | string;
+
+/**
  * A condition for a Choice state rule.
  *
  * Simple conditions compare a variable against a value.
  * Compound conditions combine other conditions with `and`, `or`, or `not`.
  */
 export type ChoiceCondition =
-  | { variable: ChoiceVariable; stringEquals: string }
-  | { variable: ChoiceVariable; stringLessThan: string }
-  | { variable: ChoiceVariable; stringGreaterThan: string }
-  | { variable: ChoiceVariable; stringLessThanEquals: string }
-  | { variable: ChoiceVariable; stringGreaterThanEquals: string }
+  | { variable: ChoiceVariableOf<string>; stringEquals: string }
+  | { variable: ChoiceVariableOf<string>; stringLessThan: string }
+  | { variable: ChoiceVariableOf<string>; stringGreaterThan: string }
+  | { variable: ChoiceVariableOf<string>; stringLessThanEquals: string }
+  | { variable: ChoiceVariableOf<string>; stringGreaterThanEquals: string }
   /** Glob-style comparison: `*` matches any run of characters. */
-  | { variable: ChoiceVariable; stringMatches: string }
-  | { variable: ChoiceVariable; numericEquals: number }
-  | { variable: ChoiceVariable; numericGreaterThan: number }
-  | { variable: ChoiceVariable; numericLessThan: number }
-  | { variable: ChoiceVariable; numericGreaterThanEquals: number }
-  | { variable: ChoiceVariable; numericLessThanEquals: number }
-  | { variable: ChoiceVariable; booleanEquals: boolean }
+  | { variable: ChoiceVariableOf<string>; stringMatches: string }
+  | { variable: ChoiceVariableOf<number>; numericEquals: number }
+  | { variable: ChoiceVariableOf<number>; numericGreaterThan: number }
+  | { variable: ChoiceVariableOf<number>; numericLessThan: number }
+  | { variable: ChoiceVariableOf<number>; numericGreaterThanEquals: number }
+  | { variable: ChoiceVariableOf<number>; numericLessThanEquals: number }
+  | { variable: ChoiceVariableOf<boolean>; booleanEquals: boolean }
   /** Timestamps are RFC3339 strings, e.g. `'2026-01-01T00:00:00Z'`. */
-  | { variable: ChoiceVariable; timestampEquals: string }
-  | { variable: ChoiceVariable; timestampLessThan: string }
-  | { variable: ChoiceVariable; timestampGreaterThan: string }
-  | { variable: ChoiceVariable; timestampLessThanEquals: string }
-  | { variable: ChoiceVariable; timestampGreaterThanEquals: string }
+  | { variable: ChoiceVariableOf<string>; timestampEquals: string }
+  | { variable: ChoiceVariableOf<string>; timestampLessThan: string }
+  | { variable: ChoiceVariableOf<string>; timestampGreaterThan: string }
+  | { variable: ChoiceVariableOf<string>; timestampLessThanEquals: string }
+  | { variable: ChoiceVariableOf<string>; timestampGreaterThanEquals: string }
   | { variable: ChoiceVariable; isPresent: boolean }
   | { variable: ChoiceVariable; isNull: boolean }
   | { variable: ChoiceVariable; isNumeric: boolean }
@@ -42,35 +50,41 @@ export type ChoiceCondition =
   // is a typed ref, and the variable is required to agree with it —
   // `numericLessThanPath` wants Ref<number> on both sides. (StringMatches
   // has no Path variant in the ASL spec.)
-  | { variable: Ref<string> | string; stringEqualsPath: Ref<string> }
-  | { variable: Ref<string> | string; stringLessThanPath: Ref<string> }
-  | { variable: Ref<string> | string; stringGreaterThanPath: Ref<string> }
-  | { variable: Ref<string> | string; stringLessThanEqualsPath: Ref<string> }
+  | { variable: ChoiceVariableOf<string>; stringEqualsPath: Ref<string> }
+  | { variable: ChoiceVariableOf<string>; stringLessThanPath: Ref<string> }
+  | { variable: ChoiceVariableOf<string>; stringGreaterThanPath: Ref<string> }
   | {
-      variable: Ref<string> | string;
+      variable: ChoiceVariableOf<string>;
+      stringLessThanEqualsPath: Ref<string>;
+    }
+  | {
+      variable: ChoiceVariableOf<string>;
       stringGreaterThanEqualsPath: Ref<string>;
     }
-  | { variable: Ref<number> | string; numericEqualsPath: Ref<number> }
-  | { variable: Ref<number> | string; numericLessThanPath: Ref<number> }
-  | { variable: Ref<number> | string; numericGreaterThanPath: Ref<number> }
+  | { variable: ChoiceVariableOf<number>; numericEqualsPath: Ref<number> }
+  | { variable: ChoiceVariableOf<number>; numericLessThanPath: Ref<number> }
+  | { variable: ChoiceVariableOf<number>; numericGreaterThanPath: Ref<number> }
   | {
-      variable: Ref<number> | string;
+      variable: ChoiceVariableOf<number>;
       numericLessThanEqualsPath: Ref<number>;
     }
   | {
-      variable: Ref<number> | string;
+      variable: ChoiceVariableOf<number>;
       numericGreaterThanEqualsPath: Ref<number>;
     }
-  | { variable: Ref<boolean> | string; booleanEqualsPath: Ref<boolean> }
-  | { variable: Ref<string> | string; timestampEqualsPath: Ref<string> }
-  | { variable: Ref<string> | string; timestampLessThanPath: Ref<string> }
-  | { variable: Ref<string> | string; timestampGreaterThanPath: Ref<string> }
+  | { variable: ChoiceVariableOf<boolean>; booleanEqualsPath: Ref<boolean> }
+  | { variable: ChoiceVariableOf<string>; timestampEqualsPath: Ref<string> }
+  | { variable: ChoiceVariableOf<string>; timestampLessThanPath: Ref<string> }
   | {
-      variable: Ref<string> | string;
+      variable: ChoiceVariableOf<string>;
+      timestampGreaterThanPath: Ref<string>;
+    }
+  | {
+      variable: ChoiceVariableOf<string>;
       timestampLessThanEqualsPath: Ref<string>;
     }
   | {
-      variable: Ref<string> | string;
+      variable: ChoiceVariableOf<string>;
       timestampGreaterThanEqualsPath: Ref<string>;
     }
   | { and: ChoiceCondition[] }

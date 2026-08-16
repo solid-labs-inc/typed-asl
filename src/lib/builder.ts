@@ -15,8 +15,42 @@ import type {
 
 // ── Retry presets ───────────────────────────────────────────────────
 
+/**
+ * Error names predefined by the ASL spec, plus the Lambda service errors
+ * that show up in real Retry/Catch configs.
+ */
+export type KnownAslError =
+  | 'States.ALL'
+  | 'States.BranchFailed'
+  | 'States.DataLimitExceeded'
+  | 'States.ExceedToleratedFailureThreshold'
+  | 'States.HeartbeatTimeout'
+  | 'States.IntrinsicFailure'
+  | 'States.ItemReaderFailed'
+  | 'States.NoChoiceMatched'
+  | 'States.ParameterPathFailure'
+  | 'States.Permissions'
+  | 'States.ResultPathMatchFailure'
+  | 'States.ResultWriterFailed'
+  | 'States.Runtime'
+  | 'States.TaskFailed'
+  | 'States.Timeout'
+  | 'Lambda.AWSLambdaException'
+  | 'Lambda.ClientExecutionTimeoutException'
+  | 'Lambda.SdkClientException'
+  | 'Lambda.ServiceException'
+  | 'Lambda.TooManyRequestsException';
+
+/**
+ * An error name for `ErrorEquals`: the known names autocomplete, and any
+ * custom error string (your Lambda's own error types) stays legal — the
+ * `& Record<never, never>` keeps the union from collapsing to `string`,
+ * which would kill completion.
+ */
+export type AslErrorName = KnownAslError | (string & Record<never, never>);
+
 export interface RetryConfig {
-  ErrorEquals: string[];
+  ErrorEquals: AslErrorName[];
   IntervalSeconds: number;
   BackoffRate: number;
   MaxAttempts: number;
@@ -144,10 +178,15 @@ export type BranchInput<Ctx> =
 export type BranchOutputTuple<
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _Base,
-  // Constrained loosely: `readonly BranchInput<X>[]` runs into function-
-  // parameter contravariance when X varies; the mapped type below handles
-  // both branch forms explicitly anyway.
-  Branches extends readonly unknown[],
+  // `readonly BranchInput<X>[]` would trip function-parameter
+  // contravariance when X varies, but `(b: never) => ...` accepts every
+  // factory for the same reason — so the constraint stays precise.
+  Branches extends readonly (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | SequenceBuilder<any>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | ((b: never) => SequenceBuilder<any>)
+  )[],
 > = {
   [I in keyof Branches]: Branches[I] extends SequenceBuilder<infer Full>
     ? Full
@@ -171,7 +210,12 @@ export interface MapConfig<
   ProcessorCtx,
   CatchKey extends string = never,
 > {
-  /** JSONPath to the array to iterate (e.g. `'$.scenes'`). */
+  /**
+   * JSONPath to the array to iterate (e.g. `'$.scenes'`). Prefer the
+   * `items` ref selector on `map()` — it autocompletes and typos don't
+   * compile; a literal path here is type-checked against the context but
+   * without completion.
+   */
   itemsPath: string;
   /** Max concurrent iterations (default: unlimited). */
   maxConcurrency?: number;
@@ -216,8 +260,17 @@ export interface CustomTaskConfig<
    * Supports refs and intrinsic functions at any nesting depth.
    */
   parameters: (ctx: Proxied<Ctx>) => Record<string, unknown>;
-  /** Where to store the result (e.g. `'$.transcodeJob'`). Omit to replace input. */
+  /**
+   * Where to store the result, as `$.{key}` — the context type is keyed
+   * by `key`. Omit to have the result replace the entire state input
+   * (ASL's default), which the context type also reflects.
+   */
   resultPath?: string;
+  /**
+   * Types the task's result (`z.infer` drives the context). Typing only:
+   * no ResultSelector is generated and nothing is validated at runtime.
+   */
+  outputSchema?: z.ZodType;
   retry?: RetryConfig[];
   catch?: CatchConfig<Ctx, CatchKey>[];
 }
@@ -244,6 +297,13 @@ const CATCH_HANDLERS: unique symbol = Symbol('catchHandlers');
 const STATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
+ * A `customTask` resultPath must be `$.{identifier}` — the context type is
+ * keyed by that identifier, so anything else would desynchronize types
+ * from the runtime data location.
+ */
+const RESULT_PATH = /^\$\.[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
  * Configuration for a Catch block on a Parallel or Task state.
  *
  * @typeParam Ctx - The current builder context.
@@ -251,7 +311,7 @@ const STATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  *   When provided, the handler context is extended with `Record<Key, unknown>`.
  */
 export interface CatchConfig<Ctx, Key extends string = never> {
-  errorEquals: string[];
+  errorEquals: AslErrorName[];
   resultPath?: `$.${Key}`;
 
   handler: (
@@ -787,14 +847,14 @@ export class SequenceBuilder<Ctx> {
    *
    * @example
    * ```ts
-   * // Pre-built processor (ignore b)
+   * // Pre-built processor (ignore b); items as a typed ref selector
    * builder.map('processScenes', {
-   *   itemsPath: '$.scenes',
+   *   items: (ctx) => ctx.scenes,
    *   itemSelector: (item, ctx) => ({ scene: item.value }),
    *   processor: () => sceneProcessor,
    * })
    *
-   * // Inline processor — context inferred from selector
+   * // Inline processor — context inferred from selector; raw itemsPath
    * builder.map('extractAudio', {
    *   itemsPath: '$.sentences',
    *   itemSelector: (item: MapItemRef<Sentence>, ctx) => ({
@@ -810,6 +870,32 @@ export class SequenceBuilder<Ctx> {
    */
   /**
    * Overload: `itemsPath` is a string literal — inferred `ItemType`.
+   */
+  /**
+   * Overload: `items` is a typed ref selector — `items: (ctx) =>
+   * ctx.scenes` gets code completion, a typo doesn't compile, and
+   * `ItemType` is inferred from the ref. Preferred over `itemsPath`.
+   */
+  map<
+    Name extends string,
+    ItemType,
+    S extends Record<string, unknown>,
+    ProcessorCtx,
+    CatchKey extends string = never,
+  >(
+    name: Name,
+    config: Omit<
+      MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey>,
+      'itemsPath'
+    > & {
+      items: (ctx: Proxied<Ctx>) => Ref<readonly ItemType[]>;
+      itemsPath?: undefined;
+    },
+  ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
+
+  /**
+   * Overload: `itemsPath` is a string literal — `ItemType` inferred by
+   * parsing the path against the context type.
    */
   map<
     Name extends string,
@@ -843,8 +929,20 @@ export class SequenceBuilder<Ctx> {
 
   map(
     name: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: MapConfig<any, any, any, any, any>,
+    // Broad structural type: generic Omit intersections defeat the
+    // overload-compatibility check, so the impl spells the fields out.
+    config: {
+      itemsPath?: string;
+      items?: (ctx: Proxied<Ctx>) => Ref<readonly unknown[]>;
+      maxConcurrency?: number;
+      retry?: RetryConfig[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      catch?: CatchConfig<any, any>[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      itemSelector: (item: any, ctx: any) => Record<string, unknown>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      processor: (b: any) => SequenceBuilder<any>;
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const outerProxy = createProxy<Ctx>();
@@ -857,9 +955,18 @@ export class SequenceBuilder<Ctx> {
     const processor = config.processor(new SequenceBuilder<any>());
     const built = processor.build();
 
+    const itemsPath = config.items
+      ? pathOf(config.items(outerProxy))
+      : config.itemsPath;
+    if (itemsPath === undefined) {
+      throw new Error(
+        `Map state "${name}" needs either items (a typed ref selector) or itemsPath`,
+      );
+    }
+
     const state: Record<string, unknown> = {
       Type: 'Map',
-      ItemsPath: config.itemsPath,
+      ItemsPath: itemsPath,
       ResultPath: `$.${name}`,
       ItemSelector: itemSelector,
       ItemProcessor: {
@@ -892,8 +999,12 @@ export class SequenceBuilder<Ctx> {
    * The parameters callback supports refs and intrinsic functions at any
    * nesting depth.
    *
-   * @typeParam Name - State name and context key.
-   * @typeParam O - Output type (defaults to `Record<string, unknown>`).
+   * The context follows the ASL semantics of `ResultPath`, not the state
+   * name: with `resultPath: '$.transcodeJob'` the result is available as
+   * `ctx.transcodeJob`; with no `resultPath`, the result replaces the
+   * entire state input and the context becomes the task's output alone.
+   * Pass `outputSchema` to type that output (it drives typing only — no
+   * ResultSelector is generated and nothing is validated at runtime).
    *
    * @example
    * ```ts
@@ -910,17 +1021,67 @@ export class SequenceBuilder<Ctx> {
    *     },
    *   }),
    *   resultPath: '$.transcodeJob',
+   *   outputSchema: z.object({ JobId: z.string() }),
    * })
+   * // ctx.transcodeJob.JobId: string
    * ```
    */
+
+  /** Overload: `resultPath` + `outputSchema` — typed result at `ctx.{key}`. */
   customTask<
-    Name extends string,
-    O = Record<string, unknown>,
+    OSchema extends z.ZodType,
+    Key extends string,
     CatchKey extends string = never,
   >(
-    name: Name,
-    config: CustomTaskConfig<Ctx, CatchKey>,
-  ): SequenceBuilder<Ctx & Record<Name, O>> {
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath: `$.${Key}`;
+      outputSchema: OSchema;
+    },
+  ): SequenceBuilder<Ctx & Record<Key, z.infer<OSchema>>>;
+
+  /** Overload: `resultPath` only — untyped result at `ctx.{key}`. */
+  customTask<Key extends string, CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath: `$.${Key}`;
+      outputSchema?: undefined;
+    },
+  ): SequenceBuilder<Ctx & Record<Key, Record<string, unknown>>>;
+
+  /** Overload: no `resultPath` — the typed output replaces the input. */
+  customTask<OSchema extends z.ZodType, CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath?: undefined;
+      outputSchema: OSchema;
+    },
+  ): SequenceBuilder<z.infer<OSchema>>;
+
+  /** Overload: no `resultPath`, no schema — untyped replacement. */
+  customTask<CatchKey extends string = never>(
+    name: string,
+    config: CustomTaskConfig<Ctx, CatchKey> & {
+      resultPath?: undefined;
+      outputSchema?: undefined;
+    },
+  ): SequenceBuilder<Record<string, unknown>>;
+
+  customTask(
+    name: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    config: CustomTaskConfig<Ctx, any>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ): SequenceBuilder<any> {
+    if (
+      config.resultPath !== undefined &&
+      !RESULT_PATH.test(config.resultPath)
+    ) {
+      throw new Error(
+        `customTask "${name}": resultPath "${config.resultPath}" must be "$.{key}" with a single identifier key — the context type is keyed by it, so a nested or exotic path would make downstream refs point at data that isn't there.`,
+      );
+    }
+
     const proxy = createProxy<Ctx>();
     const rawParams = config.parameters(proxy);
     const parameters = serializeParameters(rawParams);
@@ -946,7 +1107,7 @@ export class SequenceBuilder<Ctx> {
         this.buildCatchEntries(config.catch);
     }
 
-    return this.append<Ctx & Record<Name, O>>(name, state);
+    return this.append(name, state);
   }
 
   /**

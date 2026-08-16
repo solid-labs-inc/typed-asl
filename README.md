@@ -13,7 +13,7 @@ npm install typed-asl zod
 
 Hand-written ASL and Lambda handler schemas are disconnected: misaligned payloads, dangling JSONPath references and type mismatches surface only at runtime, mid-execution. If a machine built here typechecks, its payloads are correct.
 
-Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, cross-branch parallel access (`ctx.par[1].stateFromBranch0`), out-of-range parallel indices (`ctx.par[2]` on a two-branch parallel), mismatched `*Path` choice operands, and optional output fields without an explicit `resultSelector`. Every guarantee here has a matching negative test (`src/lib/type-guarantees.test.ts`) that fails the build if the API stops rejecting the bad code.
+Caught at compile time: missing or extra payload fields, refs to a nonexistent state (`ctx.doesNotExist.foo`) or field, ref type mismatches, cross-branch parallel access (`ctx.par[1].stateFromBranch0`), out-of-range parallel indices (`ctx.par[2]` on a two-branch parallel), choice conditions whose variable or operand type disagrees with the operator, `map` item selectors that are typos or not arrays, `customTask` refs that point where the result doesn't live, and optional output fields without an explicit `resultSelector`. Known ASL error names (`States.Timeout`, `Lambda.TooManyRequestsException`, …) autocomplete in `retry`/`catch` configs. Every guarantee here has a matching negative test (`src/lib/type-guarantees.test.ts`) that fails the build if the API stops rejecting the bad code.
 
 ```ts
 import { SequenceBuilder } from 'typed-asl';

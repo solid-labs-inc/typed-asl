@@ -30,6 +30,15 @@ timestampPath })`, with a callback form for typed refs to the context
   `statesArrayPartition`, `statesJsonMerge` (shallow, typed as
   `Omit<A, keyof B> & B`), `statesMathRandom`, `statesStringSplit`,
   `statesBase64Encode`/`statesBase64Decode`, `statesHash`.
+- `map` accepts `items: (ctx) => ctx.scenes` — a typed ref selector with
+  code completion — as the preferred alternative to a raw `itemsPath`
+  string; `ItemType` is inferred from the ref.
+- `customTask` accepts an optional `outputSchema` (typing only — no
+  ResultSelector, no runtime validation) so its result is typed without
+  explicit generics.
+- Known ASL and Lambda error names autocomplete in `ErrorEquals`/
+  `errorEquals` (`AslErrorName` — arbitrary custom error strings remain
+  legal).
 
 ### Changed
 
@@ -43,6 +52,19 @@ timestampPath })`, with a callback form for typed refs to the context
   results (`ctx.par[2]` on a two-branch parallel) are now compile
   errors, and proxied refs no longer expose array methods (`ctx.arr.map`
   would have recorded the JSONPath `$.arr.map`).
+- **Breaking:** `customTask`'s context type now tells the truth. It is
+  keyed by the `resultPath` key (previously by the state name, so with
+  `resultPath: '$.transcodeJob'` the type said `ctx.transcode` while the
+  data lived at `$.transcodeJob` — a dangling ref); with no `resultPath`
+  the result replaces the entire input, and the context type follows.
+  `resultPath` must be a single `$.{key}` (build-time error otherwise),
+  and the `Name`/`O` explicit type parameters are gone — use
+  `outputSchema` to type the result.
+- **Breaking (type-level):** choice conditions check the variable side —
+  `stringEquals` wants a `string`-typed ref (`null`/`undefined`
+  admitted), `numericLessThan` a numeric one, and so on
+  (`ChoiceVariableOf<T>`). Raw JSONPath strings remain the untyped
+  escape hatch; the `is*` type tests still take any variable.
 
 - Every fixture machine in the test suite is now validated against the ASL
   spec with `asl-validator` — a `build()` result that AWS would reject

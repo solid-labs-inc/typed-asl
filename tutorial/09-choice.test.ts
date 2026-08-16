@@ -277,5 +277,11 @@ describe('Chapter 9: Choice — Conditional Branching', () => {
 
     // Every comparison operator has a Path variant except stringMatches —
     // the ASL spec defines no StringMatchesPath.
+
+    // The non-Path operators check the variable side too: stringEquals
+    // wants a string-typed ref (nullable is fine — that's what conditions
+    // inspect), so `{ variable: ctx.count, stringEquals: 'x' }` is a
+    // compile error. A raw JSONPath string stays legal as the escape
+    // hatch. Only the is* type tests accept a variable of any type.
   });
 });

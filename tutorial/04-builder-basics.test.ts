@@ -429,4 +429,34 @@ describe('Chapter 4: SequenceBuilder — Context Accumulation', () => {
     // timeoutSecondsPath takes a Ref<number>, and the static and Path
     // forms of the same option are mutually exclusive (build-time error).
   });
+
+  // ── customTask: non-Lambda resources ─────────────────────────────────
+
+  it('customTask stores its result where resultPath says — and so does the type', () => {
+    type Input = { videoId: string };
+
+    // customTask is the escape hatch for non-Lambda service integrations
+    // (Batch, SNS, SDK integrations, …). The context follows ASL's
+    // ResultPath semantics: with resultPath '$.job' the result is
+    // ctx.job (NOT ctx.<stateName>), and omitting resultPath means the
+    // result replaces the entire input. outputSchema types the result —
+    // typing only, no ResultSelector, no runtime validation.
+    const asl = new SequenceBuilder<Input>()
+      .customTask('submitTranscode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ JobName: ctx.videoId }),
+        resultPath: '$.job',
+        outputSchema: z.object({ JobId: z.string() }),
+      })
+      .pass('report', (ctx) => ({ id: ctx.job.JobId })) // typed: string
+      .build();
+
+    expect(
+      (asl.States.SubmitTranscode as Record<string, unknown>).ResultPath,
+    ).toBe('$.job');
+    expect((asl.States.Report as any).Parameters['id.$']).toBe('$.job.JobId');
+
+    // resultPath must be a single '$.{key}' — the context type is keyed
+    // by it, so a nested path would make refs lie. Enforced at build time.
+  });
 });

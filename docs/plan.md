@@ -66,8 +66,16 @@ Each item is independently shippable; 0.3.0 cuts when they're all in.
 - Item 7 decided as (b): optional output fields are a compile error
   without an explicit `resultSelector` (plus a build-time throw), shipped
   as the 0.3.0 breaking change.
-- `BranchOutputTuple`'s constraint loosened to `readonly unknown[]` —
-  `readonly BranchInput<X>[]` trips function-parameter contravariance.
+- A type-tightening review pass rode along ("are we trying hard enough to
+  use the type system?"): `customTask`'s context is now keyed by
+  `resultPath` instead of the state name (the old typing was a lie — refs
+  pointed where no data lived) with an `outputSchema` typing hint
+  replacing explicit generics; `map` gained a typed `items` ref selector
+  (completion, typos don't compile); choice conditions type the variable
+  side (`ChoiceVariableOf<T>`); known ASL/Lambda error names autocomplete
+  in retry/catch (`AslErrorName`); `BranchOutputTuple`'s constraint was
+  restored to a precise one via `(b: never) => …` (contravariance makes
+  it accept every factory).
 
 1. **`Wait` state** (S). `wait(name, { seconds | timestamp |
 secondsPath: Ref<number> | timestampPath: Ref<string> })` — context type

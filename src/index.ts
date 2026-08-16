@@ -42,6 +42,8 @@ export {
   serializeParameters,
 } from './lib/builder.js';
 export type {
+  KnownAslError,
+  AslErrorName,
   RetryConfig,
   LambdaTaskConfig,
   TimeoutConfig,
@@ -58,4 +60,8 @@ export type {
   CatchConfig,
 } from './lib/builder.js';
 export { serializeCondition } from './lib/choice.js';
-export type { ChoiceCondition } from './lib/choice.js';
+export type {
+  ChoiceCondition,
+  ChoiceVariable,
+  ChoiceVariableOf,
+} from './lib/choice.js';

@@ -5,6 +5,7 @@ import {
   DEFAULT_RETRY,
   SequenceBuilder,
   THROTTLE_RETRY,
+  type InferContext,
   type RetryConfig,
 } from './builder.js';
 import { serializeCondition } from './choice.js';
@@ -4162,5 +4163,111 @@ describe('optional output fields', () => {
     expect(machine.States['Transcribe']).toMatchObject({
       ResultSelector: { 'always.$': '$.Payload.always' },
     });
+  });
+});
+
+// ── Type-tightening pass: customTask context honesty ────────────────
+
+describe('customTask context typing', () => {
+  type Ctx = { parentVideoId: string };
+
+  it('keys the context by the resultPath, not the state name', () => {
+    const b = new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: (ctx) => ({ JobName: ctx.parentVideoId }),
+        resultPath: '$.transcodeJob',
+        outputSchema: z.object({ JobId: z.string() }),
+      })
+      .pass('after', (ctx) => ({
+        // The data lives at $.transcodeJob — and so does the type.
+        jobId: ctx.transcodeJob.JobId,
+      }));
+
+    type After = InferContext<typeof b>;
+    expectTypeOf<After['transcodeJob']>().toEqualTypeOf<{ JobId: string }>();
+    expectTypeOf<After['after']>().toEqualTypeOf<{ jobId: string }>();
+
+    const machine = b.build();
+    const after = machine.States['After'] as Record<string, unknown>;
+    expect(after['Parameters']).toEqual({ 'jobId.$': '$.transcodeJob.JobId' });
+  });
+
+  it('without resultPath, the result replaces the whole input', () => {
+    const b = new SequenceBuilder<Ctx>().customTask('fetch', {
+      resource: 'arn:aws:states:::aws-sdk:s3:getObject',
+      parameters: () => ({ Bucket: 'b' }),
+      outputSchema: z.object({ Body: z.string() }),
+    });
+
+    // ASL's default ResultPath is '$' — the context is now the output
+    // alone; parentVideoId is gone.
+    expectTypeOf(b).toEqualTypeOf<SequenceBuilder<{ Body: string }>>();
+  });
+
+  it('without an outputSchema the result is untyped but still keyed correctly', () => {
+    const b = new SequenceBuilder<Ctx>().customTask('submit', {
+      resource: 'arn:aws:states:::batch:submitJob',
+      parameters: () => ({}),
+      resultPath: '$.job',
+    });
+
+    expectTypeOf(b).toEqualTypeOf<
+      SequenceBuilder<Ctx & Record<'job', Record<string, unknown>>>
+    >();
+  });
+
+  it('rejects a resultPath that is not $.{identifier}', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().customTask('submit', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.a.b' as '$.x',
+      }),
+    ).toThrow('must be "$.{key}" with a single identifier key');
+  });
+});
+
+// ── Type-tightening pass: map items ref selector ────────────────────
+
+describe('map items ref selector', () => {
+  type Scene = { id: string; startFrame: number };
+  type Ctx = { scenes: Scene[]; bucket: string };
+
+  it('serializes ItemsPath from the typed ref', () => {
+    const machine = new SequenceBuilder<Ctx>()
+      .map('processScenes', {
+        items: (ctx) => ctx.scenes,
+        itemSelector: (item, ctx) => ({
+          scene: item.value,
+          bucket: ctx.bucket,
+        }),
+        processor: (b) => b.pass('mark', (c) => ({ id: c.scene.id })),
+      })
+      .build();
+
+    const state = machine.States['ProcessScenes'] as Record<string, unknown>;
+    expect(state['ItemsPath']).toBe('$.scenes');
+  });
+
+  it('infers ItemType from the ref — item.value is typed', () => {
+    new SequenceBuilder<Ctx>().map('processScenes', {
+      items: (ctx) => ctx.scenes,
+      itemSelector: (item, ctx) => {
+        expectTypeOf(item.value.startFrame).toExtend<Ref<number>>();
+        return { start: item.value.startFrame, bucket: ctx.bucket };
+      },
+      processor: (b) => b.pass('mark', (c) => ({ s: c.start })),
+    });
+  });
+
+  it('throws when neither items nor itemsPath is given', () => {
+    expect(() =>
+      new SequenceBuilder<Ctx>().map('processScenes', {
+        itemSelector: (item: MapItemRef<Scene>) => ({ scene: item.value }),
+        processor: (b: SequenceBuilder<{ scene: Scene }>) =>
+          b.pass('mark', () => ({ ok: true })),
+      } as never),
+    ).toThrow('needs either items (a typed ref selector) or itemsPath');
   });
 });

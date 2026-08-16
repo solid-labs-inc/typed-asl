@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { SequenceBuilder } from './builder.js';
 import { statesArrayLength, statesMathAdd, statesFormat } from './intrinsic.js';
 import { createProxy } from './proxy.js';
+import type { Proxied, Ref } from './types.js';
 
 const Input = z.object({
   step: z.literal('do-thing'),
@@ -204,6 +205,48 @@ describe('type guarantees (negative cases)', () => {
         },
       ],
     }));
+  });
+
+  it('rejects a choice variable whose type disagrees with the operator', () => {
+    new SequenceBuilder<Ctx>().choice('check', (ctx) => ({
+      choices: [
+        {
+          // @ts-expect-error — stringEquals wants a string variable,
+          // ctx.size is Ref<number>
+          when: { variable: ctx.size, stringEquals: 'x' },
+          then: (b) => b,
+        },
+      ],
+    }));
+  });
+
+  it('rejects context access via the state name when customTask stores elsewhere', () => {
+    new SequenceBuilder<Ctx>()
+      .customTask('transcode', {
+        resource: 'arn:aws:states:::batch:submitJob',
+        parameters: () => ({}),
+        resultPath: '$.transcodeJob',
+      })
+      .pass('after', (ctx) => ({
+        ok: ctx.transcodeJob,
+        // @ts-expect-error — the result lives at $.transcodeJob, not at
+        // the state name; ctx.transcode would be a dangling ref
+        wrong: ctx.transcode,
+      }));
+  });
+
+  it('rejects a map items selector that is a typo or not an array', () => {
+    type MapCtx = Ctx & { scenes: { id: string }[] };
+    // Pinned at the exact annotation the map() items overload uses —
+    // overload-resolution error anchors are too unstable for directives
+    // on a full map() call.
+    type ItemsSelector = (ctx: Proxied<MapCtx>) => Ref<readonly unknown[]>;
+    const valid: ItemsSelector = (ctx) => ctx.scenes;
+    // @ts-expect-error — `scenez` is a typo, not a context key
+    const typo: ItemsSelector = (ctx) => ctx.scenez;
+    // @ts-expect-error — `bucket` is a string, not an array
+    const notArray: ItemsSelector = (ctx) => ctx.bucket;
+    void [valid, typo, notArray];
   });
 
   it('rejects intrinsic arguments of the wrong type', () => {
