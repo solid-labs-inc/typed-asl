@@ -84,7 +84,7 @@ Each claim above is pinned by something that fails the build when it stops being
 - **Every `build()` in the suite is validated against the ASL spec** with `asl-validator`, through a setup hook rather than per-call-site opt-in — so a fixture AWS would reject cannot pass CI.
 - **Negative type tests** ([`src/lib/type-guarantees.test.ts`](src/lib/type-guarantees.test.ts)) pin the compile-time contract as `@ts-expect-error` cases. `tsc` checks those in both directions, so they still fail when inference quietly degrades to `any` — which no passing runtime test would catch.
 - **Three compilers**: the pinned `~5.7`, the newest 5.x, and `typescript@latest`. Type-level behavior is this library's API surface, so a compiler upgrade can be a breaking change.
-- **Coverage is a ratchet**, with the floor currently at 96% statements / 92% branches. CI fails if it drops, and the thresholds only ever move up.
+- **Coverage is a ratchet** — the floor sits at 95% statements / 91% branches, and CI fails if it drops. Thresholds only move up, with one documented exception: re-baselining when a coverage-tool major bump shifts attribution (vitest 3 → 4 measured about a point lower on identical code).
 - **Releases are signed.** Publishing runs from the tagged workflow through npm trusted publishing (OIDC, no long-lived token), so the tarball on npm carries provenance back to this repo and commit.
 
 ## Scope
