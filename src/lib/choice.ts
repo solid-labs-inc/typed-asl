@@ -14,12 +14,30 @@ export type ChoiceVariable = Ref<unknown> | string;
  */
 export type ChoiceCondition =
   | { variable: ChoiceVariable; stringEquals: string }
+  | { variable: ChoiceVariable; stringLessThan: string }
+  | { variable: ChoiceVariable; stringGreaterThan: string }
+  | { variable: ChoiceVariable; stringLessThanEquals: string }
+  | { variable: ChoiceVariable; stringGreaterThanEquals: string }
+  /** Glob-style comparison: `*` matches any run of characters. */
+  | { variable: ChoiceVariable; stringMatches: string }
   | { variable: ChoiceVariable; numericEquals: number }
   | { variable: ChoiceVariable; numericGreaterThan: number }
   | { variable: ChoiceVariable; numericLessThan: number }
+  | { variable: ChoiceVariable; numericGreaterThanEquals: number }
+  | { variable: ChoiceVariable; numericLessThanEquals: number }
   | { variable: ChoiceVariable; booleanEquals: boolean }
+  /** Timestamps are RFC3339 strings, e.g. `'2026-01-01T00:00:00Z'`. */
+  | { variable: ChoiceVariable; timestampEquals: string }
+  | { variable: ChoiceVariable; timestampLessThan: string }
+  | { variable: ChoiceVariable; timestampGreaterThan: string }
+  | { variable: ChoiceVariable; timestampLessThanEquals: string }
+  | { variable: ChoiceVariable; timestampGreaterThanEquals: string }
   | { variable: ChoiceVariable; isPresent: boolean }
   | { variable: ChoiceVariable; isNull: boolean }
+  | { variable: ChoiceVariable; isNumeric: boolean }
+  | { variable: ChoiceVariable; isString: boolean }
+  | { variable: ChoiceVariable; isBoolean: boolean }
+  | { variable: ChoiceVariable; isTimestamp: boolean }
   | { and: ChoiceCondition[] }
   | { or: ChoiceCondition[] }
   | { not: ChoiceCondition };
@@ -29,12 +47,28 @@ export type ChoiceCondition =
 /** Map from camelCase condition keys to ASL PascalCase. */
 const CONDITION_KEY_MAP: Record<string, string> = {
   stringEquals: 'StringEquals',
+  stringLessThan: 'StringLessThan',
+  stringGreaterThan: 'StringGreaterThan',
+  stringLessThanEquals: 'StringLessThanEquals',
+  stringGreaterThanEquals: 'StringGreaterThanEquals',
+  stringMatches: 'StringMatches',
   numericEquals: 'NumericEquals',
   numericGreaterThan: 'NumericGreaterThan',
   numericLessThan: 'NumericLessThan',
+  numericGreaterThanEquals: 'NumericGreaterThanEquals',
+  numericLessThanEquals: 'NumericLessThanEquals',
   booleanEquals: 'BooleanEquals',
+  timestampEquals: 'TimestampEquals',
+  timestampLessThan: 'TimestampLessThan',
+  timestampGreaterThan: 'TimestampGreaterThan',
+  timestampLessThanEquals: 'TimestampLessThanEquals',
+  timestampGreaterThanEquals: 'TimestampGreaterThanEquals',
   isPresent: 'IsPresent',
   isNull: 'IsNull',
+  isNumeric: 'IsNumeric',
+  isString: 'IsString',
+  isBoolean: 'IsBoolean',
+  isTimestamp: 'IsTimestamp',
 };
 
 function resolveVariable(v: ChoiceVariable): string {

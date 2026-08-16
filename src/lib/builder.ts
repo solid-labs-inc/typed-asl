@@ -136,11 +136,14 @@ export interface MapConfig<
   ItemType,
   S extends Record<string, unknown>,
   ProcessorCtx,
+  CatchKey extends string = never,
 > {
   /** JSONPath to the array to iterate (e.g. `'$.scenes'`). */
   itemsPath: string;
   /** Max concurrent iterations (default: unlimited). */
   maxConcurrency?: number;
+  retry?: RetryConfig[];
+  catch?: CatchConfig<Ctx, CatchKey>[];
   /**
    * Maps each iteration's context object (`$$`) and the outer state data (`$`)
    * to the ItemProcessor's initial context.
@@ -169,7 +172,7 @@ export interface MapConfig<
 /**
  * Configuration for a custom (non-Lambda) Task state.
  */
-export interface CustomTaskConfig<Ctx> {
+export interface CustomTaskConfig<Ctx, CatchKey extends string = never> {
   /** The task resource ARN (e.g. `'arn:aws:states:::batch:submitJob'`). */
   resource: string;
   /**
@@ -180,6 +183,7 @@ export interface CustomTaskConfig<Ctx> {
   /** Where to store the result (e.g. `'$.transcodeJob'`). Omit to replace input. */
   resultPath?: string;
   retry?: RetryConfig[];
+  catch?: CatchConfig<Ctx, CatchKey>[];
 }
 
 // ── Catch types ─────────────────────────────────────────────────────
@@ -374,11 +378,13 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    CatchKey extends string = never,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
       resultPath: null;
+      catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<UnwrapRefs<R>>;
@@ -387,9 +393,17 @@ export class SequenceBuilder<Ctx> {
    * Overload: `resultPath: null` without `resultSelector` — the full Lambda
    * output replaces the entire state input.
    */
-  task<Name extends string, I extends AnyZodObject, O extends AnyZodObject>(
+  task<
+    Name extends string,
+    I extends AnyZodObject,
+    O extends AnyZodObject,
+    CatchKey extends string = never,
+  >(
     name: Name,
-    config: LambdaTaskConfig<I, O> & { resultPath: null },
+    config: LambdaTaskConfig<I, O> & {
+      resultPath: null;
+      catch?: CatchConfig<Ctx, CatchKey>[];
+    },
     payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<z.infer<O>>;
 
@@ -404,10 +418,12 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    CatchKey extends string = never,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
+      catch?: CatchConfig<Ctx, CatchKey>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<R>>>;
@@ -416,9 +432,16 @@ export class SequenceBuilder<Ctx> {
    * Overload: without `resultSelector` — auto-generates a 1:1 mapping from
    * the output schema keys. The context type matches `z.infer<O>`.
    */
-  task<Name extends string, I extends AnyZodObject, O extends AnyZodObject>(
+  task<
+    Name extends string,
+    I extends AnyZodObject,
+    O extends AnyZodObject,
+    CatchKey extends string = never,
+  >(
     name: Name,
-    config: LambdaTaskConfig<I, O>,
+    config: LambdaTaskConfig<I, O> & {
+      catch?: CatchConfig<Ctx, CatchKey>[];
+    },
     payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
   ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
 
@@ -427,6 +450,8 @@ export class SequenceBuilder<Ctx> {
     config: LambdaTaskConfig<AnyZodObject, AnyZodObject> & {
       resultSelector?: (output: Proxied<unknown>) => Record<string, unknown>;
       resultPath?: null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      catch?: CatchConfig<any, any>[];
     },
     payloadFn: (ctx: Proxied<Ctx>) => Record<string, unknown>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -463,7 +488,24 @@ export class SequenceBuilder<Ctx> {
       state['Retry'] = config.retry;
     }
 
+    if (config.catch) {
+      (state as Record<string | symbol, unknown>)[CATCH_HANDLERS] =
+        this.buildCatchEntries(config.catch);
+    }
+
     return this.append(name, state);
+  }
+
+  /**
+   * @internal Instantiate catch handler builders for a state's Catch config.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildCatchEntries(configs: CatchConfig<any, any>[]): CatchEntry[] {
+    return configs.map((c) => ({
+      errorEquals: c.errorEquals,
+      resultPath: c.resultPath,
+      builder: c.handler(new SequenceBuilder<Ctx>()),
+    }));
   }
 
   /**
@@ -500,7 +542,7 @@ export class SequenceBuilder<Ctx> {
   >(
     name: Name,
     branches: [...Branches],
-    options?: { catch?: CatchConfig<Ctx, CatchKey>[] },
+    options?: { retry?: RetryConfig[]; catch?: CatchConfig<Ctx, CatchKey>[] },
   ): SequenceBuilder<Ctx & Record<Name, BranchOutputTuple<Ctx, Branches>>>;
 
   parallel(
@@ -508,7 +550,7 @@ export class SequenceBuilder<Ctx> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     branches: SequenceBuilder<any>[],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    options?: { catch?: CatchConfig<any, any>[] },
+    options?: { retry?: RetryConfig[]; catch?: CatchConfig<any, any>[] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const aslBranches = branches.map((b) => b.build());
@@ -519,14 +561,13 @@ export class SequenceBuilder<Ctx> {
       Branches: aslBranches,
     };
 
+    if (options?.retry) {
+      state['Retry'] = options.retry;
+    }
+
     if (options?.catch) {
-      const catchEntries: CatchEntry[] = options.catch.map((c) => ({
-        errorEquals: c.errorEquals,
-        resultPath: c.resultPath,
-        builder: c.handler(new SequenceBuilder<Ctx>()),
-      }));
       (state as Record<string | symbol, unknown>)[CATCH_HANDLERS] =
-        catchEntries;
+        this.buildCatchEntries(options.catch);
     }
 
     return this.append(name, state);
@@ -669,13 +710,15 @@ export class SequenceBuilder<Ctx> {
     ItemsPath extends string,
     S extends Record<string, unknown>,
     ProcessorCtx,
+    CatchKey extends string = never,
   >(
     name: Name,
     config: MapConfig<
       Ctx,
       PathValue<Ctx, ItemsPath> extends (infer I)[] ? I : never,
       S,
-      ProcessorCtx
+      ProcessorCtx,
+      CatchKey
     > & {
       itemsPath: ItemsPath;
     },
@@ -686,15 +729,16 @@ export class SequenceBuilder<Ctx> {
     ItemType,
     S extends Record<string, unknown>,
     ProcessorCtx,
+    CatchKey extends string = never,
   >(
     name: Name,
-    config: MapConfig<Ctx, ItemType, S, ProcessorCtx>,
+    config: MapConfig<Ctx, ItemType, S, ProcessorCtx, CatchKey>,
   ): SequenceBuilder<Ctx & Record<Name, ProcessorCtx[]>>;
 
   map(
     name: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: MapConfig<any, any, any, any>,
+    config: MapConfig<any, any, any, any, any>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): SequenceBuilder<any> {
     const outerProxy = createProxy<Ctx>();
@@ -721,6 +765,15 @@ export class SequenceBuilder<Ctx> {
 
     if (config.maxConcurrency !== undefined) {
       state['MaxConcurrency'] = config.maxConcurrency;
+    }
+
+    if (config.retry) {
+      state['Retry'] = config.retry;
+    }
+
+    if (config.catch) {
+      (state as Record<string | symbol, unknown>)[CATCH_HANDLERS] =
+        this.buildCatchEntries(config.catch);
     }
 
     return this.append(name, state);
@@ -754,9 +807,13 @@ export class SequenceBuilder<Ctx> {
    * })
    * ```
    */
-  customTask<Name extends string, O = Record<string, unknown>>(
+  customTask<
+    Name extends string,
+    O = Record<string, unknown>,
+    CatchKey extends string = never,
+  >(
     name: Name,
-    config: CustomTaskConfig<Ctx>,
+    config: CustomTaskConfig<Ctx, CatchKey>,
   ): SequenceBuilder<Ctx & Record<Name, O>> {
     const proxy = createProxy<Ctx>();
     const rawParams = config.parameters(proxy);
@@ -774,6 +831,11 @@ export class SequenceBuilder<Ctx> {
 
     if (config.retry) {
       state['Retry'] = config.retry;
+    }
+
+    if (config.catch) {
+      (state as Record<string | symbol, unknown>)[CATCH_HANDLERS] =
+        this.buildCatchEntries(config.catch);
     }
 
     return this.append<Ctx & Record<Name, O>>(name, state);
@@ -1048,7 +1110,7 @@ export class SequenceBuilder<Ctx> {
         copy['Next'] = nextStateName;
       }
 
-      // Handle Catch handlers (Parallel, Task states)
+      // Handle Catch handlers (Task, Parallel, and Map states)
       if (CATCH_HANDLERS in state) {
         const handlers = (state as Record<string | symbol, unknown>)[
           CATCH_HANDLERS
@@ -1198,6 +1260,10 @@ function buildAslPayload(
  * Auto-generate the ASL ResultSelector from an output schema.
  *
  * Produces `{ "key.$": "$.Payload.key" }` for every key in the schema.
+ *
+ * Caveat: ASL errors at runtime when a referenced key is absent from the
+ * payload, so a schema with `.optional()` fields the Lambda may omit needs
+ * an explicit `resultSelector` instead of this auto-generated one.
  */
 function buildResultSelector(
   outputSchema: AnyZodObject,

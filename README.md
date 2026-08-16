@@ -73,7 +73,7 @@ new SequenceBuilder<Input>()
 
 ## Scope
 
-Supported states: `Task` (Lambda, plus a `customTask` escape hatch for any service integration ARN), `Parallel`, `Map`, `Choice`, `Pass`, `Fail`, `Succeed` — with `Retry`, `Catch`, `ResultSelector` and intrinsic functions.
+Supported states: `Task` (Lambda, plus a `customTask` escape hatch for any service integration ARN), `Parallel`, `Map`, `Choice`, `Pass`, `Fail`, `Succeed`. `Retry` and `Catch` work on `Task`, `customTask`, `Map`, and `Parallel`. Choice supports every JSONPath-mode comparison operator except the `*Path` variants. Intrinsics: `States.Format`, `JsonToString`, `StringToJson`, `MathAdd`, `Array`, `ArrayLength`, `UUID`.
 
 Not yet supported, and worth knowing before you adopt:
 
@@ -81,6 +81,7 @@ Not yet supported, and worth knowing before you adopt:
 - **No Distributed Map** (`ItemReader`/`ResultWriter`/`ItemBatcher`).
 - **No `Wait` state**, and no state-level `TimeoutSeconds`/`HeartbeatSeconds`.
 - **Zod only.** Output schemas drive `ResultSelector` generation, so other validators aren't pluggable today.
+- **Optional output fields need a custom `resultSelector`.** The auto-generated selector maps every output schema key from `$.Payload.{key}`, and ASL errors at runtime when a referenced key is absent. If a Lambda may omit a field, pass an explicit `resultSelector`.
 - **`build()` does not validate against the ASL spec.** It guarantees your mappings and refs, not that AWS will accept every machine you can express.
 
 This came out of a production monorepo, where it builds real state machines — but it has been shaped by a small number of them. Expect rough edges on shapes we haven't hit. Issues and PRs welcome.
