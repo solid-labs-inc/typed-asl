@@ -1,3 +1,4 @@
+import { isRef } from './proxy.js';
 import { type Ref, REF_PATH } from './types.js';
 
 /**
@@ -40,9 +41,9 @@ function createIntrinsic<T>(expression: string): IntrinsicExpr<T> {
   };
 }
 
-function argToString(arg: Ref<unknown> | IntrinsicExpr): string {
+function argToString(arg: Ref<unknown> | IntrinsicExpr<unknown>): string {
   if (INTRINSIC_EXPR in arg) {
-    return (arg as IntrinsicExpr)[INTRINSIC_EXPR];
+    return (arg as IntrinsicExpr<unknown>)[INTRINSIC_EXPR];
   }
   // It's a Ref — convert path segments to JSONPath
   const segments = (arg as Ref<unknown>)[REF_PATH];
@@ -86,7 +87,7 @@ function escapeTemplate(template: string): string {
  */
 export function statesFormat(
   template: string,
-  ...args: (Ref<unknown> | IntrinsicExpr)[]
+  ...args: (Ref<unknown> | IntrinsicExpr<unknown>)[]
 ): IntrinsicExpr<string> {
   const argStrings = args.map(argToString);
   const allArgs = [`'${escapeTemplate(template)}'`, ...argStrings].join(', ');
@@ -104,7 +105,9 @@ export function statesFormat(
  * // → "States.JsonToString($.extractScenes)"
  * ```
  */
-export function statesJsonToString(ref: Ref<unknown>): IntrinsicExpr<string> {
+export function statesJsonToString(
+  ref: Ref<unknown> | IntrinsicExpr<unknown>,
+): IntrinsicExpr<string> {
   return createIntrinsic<string>(`States.JsonToString(${argToString(ref)})`);
 }
 
@@ -120,10 +123,99 @@ export function statesJsonToString(ref: Ref<unknown>): IntrinsicExpr<string> {
  * ```
  */
 export function statesMathAdd(
-  ref: Ref<unknown>,
+  ref: Ref<number> | IntrinsicExpr<number>,
   operand: number,
 ): IntrinsicExpr<number> {
   return createIntrinsic<number>(
     `States.MathAdd(${argToString(ref)}, ${operand})`,
   );
+}
+
+/**
+ * Serialize a literal value as an intrinsic function argument.
+ * Strings are single-quoted (with quotes escaped); numbers, booleans and
+ * null are emitted bare.
+ */
+function literalToString(value: string | number | boolean | null): string {
+  if (typeof value === 'string') return `'${escapeTemplate(value)}'`;
+  return String(value);
+}
+
+/**
+ * Step Functions `States.Array()` intrinsic function.
+ *
+ * Builds an array from refs, intrinsics, and literal values. This is the
+ * way to put JSONPath values into an array — a bare ref as a plain array
+ * element would serialize to a literal string, since ASL only substitutes
+ * paths in object keys ending in `.$`.
+ *
+ * @example
+ * ```ts
+ * statesArray(ctx.a, 'literal', ctx.b)
+ * // → "States.Array($.a, 'literal', $.b)"
+ * ```
+ */
+export function statesArray<T>(
+  ...items: (Ref<T> | IntrinsicExpr<T> | T)[]
+): IntrinsicExpr<T[]> {
+  const parts = items.map((item) => {
+    if (isRef(item) || isIntrinsic(item)) {
+      return argToString(item);
+    }
+    if (
+      item === null ||
+      typeof item === 'string' ||
+      typeof item === 'number' ||
+      typeof item === 'boolean'
+    ) {
+      return literalToString(item as string | number | boolean | null);
+    }
+    throw new Error(
+      'statesArray() literal arguments must be strings, numbers, booleans or null — ' +
+        'objects cannot appear as intrinsic function arguments',
+    );
+  });
+  return createIntrinsic<T[]>(`States.Array(${parts.join(', ')})`);
+}
+
+/**
+ * Step Functions `States.ArrayLength()` intrinsic function.
+ *
+ * @example
+ * ```ts
+ * statesArrayLength(ctx.scenes)
+ * // → "States.ArrayLength($.scenes)"
+ * ```
+ */
+export function statesArrayLength(
+  ref: Ref<readonly unknown[]> | IntrinsicExpr<unknown[]>,
+): IntrinsicExpr<number> {
+  return createIntrinsic<number>(`States.ArrayLength(${argToString(ref)})`);
+}
+
+/**
+ * Step Functions `States.StringToJson()` intrinsic function.
+ *
+ * Parses a JSON string into a value. Pass a type parameter to describe
+ * the parsed shape.
+ *
+ * @example
+ * ```ts
+ * statesStringToJson<{ id: string }>(ctx.rawJson)
+ * // → "States.StringToJson($.rawJson)"
+ * ```
+ */
+export function statesStringToJson<T = unknown>(
+  ref: Ref<string> | IntrinsicExpr<string>,
+): IntrinsicExpr<T> {
+  return createIntrinsic<T>(`States.StringToJson(${argToString(ref)})`);
+}
+
+/**
+ * Step Functions `States.UUID()` intrinsic function.
+ *
+ * Generates a v4 UUID at execution time.
+ */
+export function statesUuid(): IntrinsicExpr<string> {
+  return createIntrinsic<string>('States.UUID()');
 }

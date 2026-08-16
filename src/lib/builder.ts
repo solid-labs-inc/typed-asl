@@ -187,6 +187,13 @@ export interface CustomTaskConfig<Ctx> {
 const CATCH_HANDLERS: unique symbol = Symbol('catchHandlers');
 
 /**
+ * State names double as JSONPath keys (`ResultPath: "$.{name}"`) and context
+ * keys (`ctx.{name}`), so they must be plain identifiers — a space or dot
+ * would produce a path AWS rejects at creation time.
+ */
+const STATE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
  * Configuration for a Catch block on a Parallel or Task state.
  *
  * @typeParam Ctx - The current builder context.
@@ -301,6 +308,13 @@ export class SequenceBuilder<Ctx> {
     name: string,
     state: Record<string, unknown>,
   ): SequenceBuilder<NewCtx> {
+    if (!STATE_NAME.test(name)) {
+      throw new Error(
+        `Invalid state name "${name}": names must be identifiers ` +
+          '(letters, digits, underscores; not starting with a digit), ' +
+          `since results are stored at "$.${name}" and read as ctx.${name}`,
+      );
+    }
     const next = new SequenceBuilder<NewCtx>();
     next._states = [...this._states, [name, state]];
     return next;
@@ -1012,6 +1026,14 @@ export class SequenceBuilder<Ctx> {
 
       // ── Terminal states (Fail / Succeed) ────────────────────────
       if (state['Type'] === 'Fail' || state['Type'] === 'Succeed') {
+        if (!isLast) {
+          // Nothing can follow a terminal state — the states after it
+          // would be unreachable, which AWS rejects at creation time.
+          throw new Error(
+            `Terminal state "${capitalize(name)}" must be the last state ` +
+              'in its sequence — the states after it would be unreachable',
+          );
+        }
         addState(capitalize(name), { ...state });
         continue;
       }
@@ -1121,11 +1143,14 @@ export function serializeParameters(
 }
 
 function serializeItem(item: unknown): unknown {
-  if (isRef(item)) {
-    return pathOf(item);
-  }
-  if (isIntrinsic(item)) {
-    return getExpression(item);
+  if (isRef(item) || isIntrinsic(item)) {
+    // ASL only substitutes JSONPaths in object keys ending in ".$" — a path
+    // string as a plain array element would reach the state as a literal.
+    throw new Error(
+      'A ref or intrinsic cannot be used directly as an array element — ' +
+        'ASL has no path substitution inside arrays. ' +
+        'Use statesArray(...) to build the array instead.',
+    );
   }
   if (Array.isArray(item)) {
     return item.map((i) => serializeItem(i));
@@ -1140,7 +1165,10 @@ function serializeItem(item: unknown): unknown {
  * Build the ASL Payload object from a typed payload mapping.
  *
  * - Converts Ref values to `"key.$": "$.path"` JSONPath entries
+ * - Recurses into nested objects and arrays (same rules as
+ *   `serializeParameters`), so refs at any depth become path entries
  * - Keeps static values as `"key": value`
+ * - Skips `undefined` values (optional schema fields can be omitted)
  */
 function buildAslPayload(
   _inputSchema: AnyZodObject,
@@ -1154,6 +1182,10 @@ function buildAslPayload(
       aslPayload[`${key}.$`] = pathOf(value);
     } else if (isIntrinsic(value)) {
       aslPayload[`${key}.$`] = getExpression(value);
+    } else if (Array.isArray(value)) {
+      aslPayload[key] = value.map((item) => serializeItem(item));
+    } else if (typeof value === 'object' && value !== null) {
+      aslPayload[key] = serializeParameters(value as Record<string, unknown>);
     } else {
       aslPayload[key] = value;
     }

@@ -6,9 +6,13 @@ export {
   INTRINSIC_EXPR,
   isIntrinsic,
   getExpression,
+  statesArray,
+  statesArrayLength,
   statesFormat,
   statesJsonToString,
   statesMathAdd,
+  statesStringToJson,
+  statesUuid,
 } from './lib/intrinsic.js';
 export type { IntrinsicExpr } from './lib/intrinsic.js';
 export {

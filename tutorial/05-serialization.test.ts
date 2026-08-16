@@ -9,8 +9,11 @@
  *
  *   - `Ref` values → `"key.$": "$.path"` (JSONPath reference)
  *   - `IntrinsicExpr` values → `"key.$": "States.Format(...)"` (intrinsic)
- *   - Nested objects → recursed
- *   - Arrays → each element serialized individually
+ *   - Nested objects → recursed (including objects inside arrays)
+ *   - Bare refs/intrinsics as array elements → an error. ASL only
+ *     substitutes paths in object keys ending in `.$`, so a path string
+ *     in an array would reach the state as a literal. Use
+ *     `statesArray(...)` to build an array of refs instead.
  *   - Primitives (string, number, boolean) → kept as-is
  *
  * The `.$` suffix is ASL's way of saying "this value is a JSONPath, not a
@@ -132,6 +135,19 @@ describe('Chapter 5: Serialization — Refs Become ASL', () => {
         { Name: 'TYPE', Value: 'asset' },
       ],
     });
+  });
+
+  it('bare refs as array elements are rejected', () => {
+    // ASL substitutes JSONPaths only in object keys ending in ".$" — an
+    // array has no keys, so a bare ref would silently become the literal
+    // string "$.id" at runtime. serializeParameters refuses instead;
+    // use statesArray(ctx.id, ctx.name) for an array of resolved values.
+    type Ctx = { name: string; id: string };
+    const ctx = createProxy<Ctx>();
+
+    expect(() => serializeParameters({ ids: [ctx.id, ctx.name] })).toThrow(
+      'statesArray',
+    );
   });
 
   // ── Intrinsics serialize to "key.$" too ──────────────────────────────
