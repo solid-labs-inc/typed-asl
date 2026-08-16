@@ -6,6 +6,7 @@ import type { MapItemRef } from './proxy.js';
 import { createMapItemProxy, createProxy, isRef, pathOf } from './proxy.js';
 import type {
   AnyZodObject,
+  ExactPayload,
   Proxied,
   Ref,
   TypedPayloadMapping,
@@ -378,6 +379,7 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -386,7 +388,7 @@ export class SequenceBuilder<Ctx> {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<UnwrapRefs<R>>;
 
   /**
@@ -397,6 +399,7 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -404,7 +407,7 @@ export class SequenceBuilder<Ctx> {
       resultPath: null;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<z.infer<O>>;
 
   /**
@@ -418,6 +421,7 @@ export class SequenceBuilder<Ctx> {
     I extends AnyZodObject,
     O extends AnyZodObject,
     R extends Record<string, unknown>,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
@@ -425,7 +429,7 @@ export class SequenceBuilder<Ctx> {
       resultSelector: (output: Proxied<z.infer<O>>) => R;
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<Ctx & Record<Name, UnwrapRefs<R>>>;
 
   /**
@@ -436,13 +440,14 @@ export class SequenceBuilder<Ctx> {
     Name extends string,
     I extends AnyZodObject,
     O extends AnyZodObject,
+    P extends TypedPayloadMapping<I>,
     CatchKey extends string = never,
   >(
     name: Name,
     config: LambdaTaskConfig<I, O> & {
       catch?: CatchConfig<Ctx, CatchKey>[];
     },
-    payloadFn: (ctx: Proxied<Ctx>) => TypedPayloadMapping<I>,
+    payloadFn: (ctx: Proxied<Ctx>) => ExactPayload<I, P>,
   ): SequenceBuilder<Ctx & Record<Name, z.infer<O>>>;
 
   task(
@@ -1232,10 +1237,109 @@ function serializeItem(item: unknown): unknown {
  * - Keeps static values as `"key": value`
  * - Skips `undefined` values (optional schema fields can be omitted)
  */
+/**
+ * The shape of a Zod 4 schema's `def`, restricted to the slice this
+ * module inspects. Kept structural so we don't depend on Zod's internal
+ * class hierarchy.
+ */
+type UnknownZodDef = {
+  type?: string;
+  catchall?: unknown;
+  innerType?: unknown;
+  element?: unknown;
+  shape?: Record<string, unknown>;
+};
+
+/**
+ * Get a schema's `def`, unwrapping optional/nullable/default wrappers so
+ * `z.object({...}).optional()` still reads as an object def.
+ */
+function unwrapZodDef(schema: unknown): UnknownZodDef | undefined {
+  let def = (schema as { def?: UnknownZodDef } | undefined)?.def;
+  while (
+    def &&
+    (def.type === 'optional' ||
+      def.type === 'nullable' ||
+      def.type === 'default')
+  ) {
+    def = (def.innerType as { def?: UnknownZodDef } | undefined)?.def;
+  }
+  return def;
+}
+
+/**
+ * The runtime half of `NoExtraPayloadKeys`, for callers outside the type
+ * system: reject payload keys the input schema does not know about, since
+ * an extra key is almost always a typo'd field the Lambda will never
+ * validate. Recurses into nested object fields and object array elements.
+ *
+ * Deliberate tolerances:
+ * - Schemas that accept unknown keys (`looseObject`, `.catchall(...)`) are
+ *   honored — no throw at that level.
+ * - `undefined` values are skipped: they are never serialized, so nothing
+ *   reaches the Lambda.
+ * - Refs and intrinsics resolve at execution time and cannot be inspected.
+ */
+function assertNoExtraPayloadKeys(
+  schema: unknown,
+  payload: Record<string, unknown>,
+  path: string,
+): void {
+  const objectDef = unwrapZodDef(schema);
+  if (objectDef?.type !== 'object' || !objectDef.shape) return;
+
+  const catchallType = objectDef.catchall
+    ? unwrapZodDef(objectDef.catchall)?.type
+    : undefined;
+  const acceptsUnknownKeys =
+    catchallType !== undefined && catchallType !== 'never';
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined) continue;
+    if (!Object.hasOwn(objectDef.shape, key)) {
+      if (acceptsUnknownKeys) continue;
+      throw new Error(
+        `Payload field "${path}${key}" is not in the input schema — it would be sent to the Lambda but never validated. Remove it or add it to the schema.`,
+      );
+    }
+    if (isRef(value) || isIntrinsic(value)) continue;
+
+    const fieldSchema = objectDef.shape[key];
+    if (Array.isArray(value)) {
+      const fieldDef = unwrapZodDef(fieldSchema);
+      if (fieldDef?.type === 'array' && fieldDef.element) {
+        for (const [i, item] of value.entries()) {
+          if (
+            item !== null &&
+            typeof item === 'object' &&
+            !Array.isArray(item) &&
+            !isRef(item) &&
+            !isIntrinsic(item)
+          ) {
+            assertNoExtraPayloadKeys(
+              fieldDef.element,
+              item as Record<string, unknown>,
+              `${path}${key}[${i}].`,
+            );
+          }
+        }
+      }
+    } else if (typeof value === 'object' && value !== null) {
+      assertNoExtraPayloadKeys(
+        fieldSchema,
+        value as Record<string, unknown>,
+        `${path}${key}.`,
+      );
+    }
+  }
+}
+
 function buildAslPayload(
-  _inputSchema: AnyZodObject,
+  inputSchema: AnyZodObject,
   mappedPayload: Record<string, unknown>,
 ): Record<string, unknown> {
+  assertNoExtraPayloadKeys(inputSchema, mappedPayload, '');
+
   const aslPayload: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(mappedPayload)) {

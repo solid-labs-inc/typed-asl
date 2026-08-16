@@ -35,6 +35,20 @@ land silently.
    Keep-a-Changelog format), npm + CI badges in the README, dependabot for
    dev dependencies.
 
+**Status: implemented** (August 2026). Notes from the implementation:
+
+- Validation runs through a vitest setup hook that wraps
+  `SequenceBuilder.prototype.build`, so every `build()` anywhere in the
+  suite is checked without call-site opt-in. asl-validator mutates its
+  input (ajv `useDefaults`); the helper validates a clone.
+- Writing the negative tests surfaced two real gaps: extra payload fields
+  were accepted (fixed — `NoExtraPayloadKeys` at compile time plus a
+  runtime throw in `buildAslPayload`), and out-of-range parallel indices
+  like `ctx.par[2]` are still accepted (the `Ref<T> &` intersection in
+  `Proxied` defeats tuple bounds checking — moved to M2 below).
+- TypeScript 7.0 is stable; the matrix runs `^5` and `latest` (the pinned
+  `~5.7.2` is covered by the build job's own typecheck).
+
 ## M2 — Ergonomics and small states (0.3.0)
 
 Each item is independently shippable; 0.3.0 cuts when they're all in.
@@ -61,7 +75,13 @@ secondsPath: Ref<number> | timestampPath: Ref<string> })` — context type
    `MathRandom`, `StringSplit`, `Base64Encode`/`Base64Decode`, `Hash` —
    typed signatures following the `statesArray`/`statesArrayLength`
    pattern.
-6. **Design decision — optional output fields.** The auto-generated
+6. **Reject out-of-range parallel indices** (S–M). `ctx.par[2]` on a
+   two-branch parallel compiles today: `Proxied<T>` intersects the mapped
+   tuple with `Ref<T>`, and property access on the intersection falls back
+   to the array number-index signature instead of erroring. Needs a
+   `Proxied` reshape that preserves tuple bounds; the negative test to
+   enable is noted in `type-guarantees.test.ts`.
+7. **Design decision — optional output fields.** The auto-generated
    `ResultSelector` errors at runtime on absent keys (documented in the
    README). JSONPath-mode ASL has no "take if present", so the honest
    options are: (a) keep the doc note, (b) make `task()` require an

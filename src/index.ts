@@ -1,5 +1,11 @@
 export { REF_PATH } from './lib/types.js';
-export type { Ref, Proxied, TypedPayloadMapping } from './lib/types.js';
+export type {
+  Ref,
+  Proxied,
+  TypedPayloadMapping,
+  NoExtraPayloadKeys,
+  ExactPayload,
+} from './lib/types.js';
 export { createProxy, pathOf, isRef, createMapItemProxy } from './lib/proxy.js';
 export type { MapItemRef } from './lib/proxy.js';
 export {

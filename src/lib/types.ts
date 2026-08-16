@@ -94,3 +94,24 @@ export type TypedPayloadMapping<T extends AnyZodObject> = {
     | Ref<z.infer<T['shape'][K]>>
     | IntrinsicExpr<z.infer<T['shape'][K]>>;
 };
+
+/**
+ * Companion to {@link TypedPayloadMapping}: marks every key of the mapping
+ * `P` that is not in the schema as `never`, so extra fields fail to
+ * compile. Plain assignability can't reject extra properties (and excess
+ * property checking doesn't fire against generic mapped types), so the
+ * task overloads intersect the callback's return type with this — see
+ * {@link ExactPayload}.
+ */
+export type NoExtraPayloadKeys<T extends AnyZodObject, P> = {
+  [K in Exclude<keyof P, keyof T['shape']>]: never;
+};
+
+/**
+ * The payload-callback return type every `task()` overload uses: the
+ * inferred mapping `P` (constrained to `TypedPayloadMapping<T>`), with
+ * extra keys rejected. A single alias so an overload can't accidentally
+ * be written without the exact-key check.
+ */
+export type ExactPayload<T extends AnyZodObject, P> = P &
+  NoExtraPayloadKeys<T, P>;

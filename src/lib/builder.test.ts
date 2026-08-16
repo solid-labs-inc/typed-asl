@@ -3749,3 +3749,85 @@ describe('serializeCondition expanded operators', () => {
     });
   });
 });
+
+// ── Runtime extra-payload-key guard ─────────────────────────────────
+
+describe('extra payload key rejection at runtime', () => {
+  const build = (
+    inputSchema: z.ZodObject<z.ZodRawShape>,
+    payload: Record<string, unknown>,
+  ) =>
+    new SequenceBuilder<{ bucket: string }>().task(
+      'doThing',
+      {
+        inputSchema: inputSchema as never,
+        outputSchema: z.object({ ok: z.boolean() }),
+        functionArn: LAMBDA_ARN,
+      },
+      () => payload as never,
+    );
+
+  it('throws for an extra top-level key', () => {
+    expect(() =>
+      build(z.object({ bucket: z.string() }), { bucket: 'b', bukcet: 'typo' }),
+    ).toThrow('Payload field "bukcet" is not in the input schema');
+  });
+
+  it('is not fooled by keys that exist on Object.prototype', () => {
+    expect(() =>
+      build(z.object({ bucket: z.string() }), { bucket: 'b', toString: 'x' }),
+    ).toThrow('Payload field "toString" is not in the input schema');
+  });
+
+  it('honors schemas that accept unknown keys', () => {
+    expect(() =>
+      build(z.looseObject({ bucket: z.string() }), { bucket: 'b', extra: 1 }),
+    ).not.toThrow();
+    expect(() =>
+      build(z.object({ bucket: z.string() }).catchall(z.number()), {
+        bucket: 'b',
+        extra: 1,
+      }),
+    ).not.toThrow();
+    // strictObject's catchall is z.never() — still rejects
+    expect(() =>
+      build(z.strictObject({ bucket: z.string() }), { bucket: 'b', extra: 1 }),
+    ).toThrow('Payload field "extra" is not in the input schema');
+  });
+
+  it('tolerates extra keys whose value is undefined — they are never serialized', () => {
+    expect(() =>
+      build(z.object({ bucket: z.string() }), {
+        bucket: 'b',
+        debug: undefined,
+      }),
+    ).not.toThrow();
+  });
+
+  it('recurses into nested object fields', () => {
+    const schema = z.object({
+      bucket: z.string(),
+      opts: z.object({ region: z.string() }).optional(),
+    });
+    expect(() =>
+      build(schema, { bucket: 'b', opts: { region: 'eu', regoin: 'typo' } }),
+    ).toThrow('Payload field "opts.regoin" is not in the input schema');
+    expect(() =>
+      build(schema, { bucket: 'b', opts: { region: 'eu' } }),
+    ).not.toThrow();
+  });
+
+  it('recurses into object array elements', () => {
+    const schema = z.object({
+      refs: z.array(z.object({ bucket: z.string(), key: z.string() })),
+    });
+    expect(() =>
+      build(schema, {
+        refs: [
+          { bucket: 'b', key: 'k' },
+          { bucket: 'b', key: 'k', keey: 'typo' },
+        ],
+      }),
+    ).toThrow('Payload field "refs[1].keey" is not in the input schema');
+  });
+});

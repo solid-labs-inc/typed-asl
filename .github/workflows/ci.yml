@@ -22,5 +22,34 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run lint
+      # Coverage thresholds are enforced on a single pinned leg — v8
+      # coverage attribution can shift between Node versions, and the
+      # ratchet margin is deliberately thin.
       - run: npm test
+        if: matrix.node != 22
+      - run: npm run test:coverage
+        if: matrix.node == 22
       - run: npm run build
+
+  # The library's behavior is substantially type-level, so a compiler
+  # upgrade can be a breaking change. Typecheck (including the negative
+  # @ts-expect-error tests) against the newest 5.x and the 7.x line; the
+  # pinned ~5.7.2 is already covered by the build job's `npm run
+  # typecheck`. Lint intentionally stays on the pinned version only —
+  # typescript-eslint support lags major compiler releases.
+  typecheck-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        typescript: ['^5', 'latest']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save typescript@${{ matrix.typescript }}
+      - run: npx tsc --version
+      - run: npx tsc --noEmit
